@@ -9,6 +9,9 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a> · <a href="SECURITY.md">Security</a> · <a href="docs/PRICING.md">Cost semantics</a></p>
 
+> **Live demo:** `https://atingaii.github.io/UsageMesh/` · password: `usagemesh-demo`  
+> The demo workspace contains synthetic sample data only. It contains no real user, device, or session data.
+
 ## Why UsageMesh
 
 UsageMesh is for people who use AI coding tools on more than one machine and want one trustworthy view of usage without running a server.
