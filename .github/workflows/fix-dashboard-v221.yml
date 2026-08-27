@@ -1,0 +1,258 @@
+name: Fix dashboard device and pricing parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-dashboard-v221.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Patch dashboard and version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('web-ui/src/app.tsx')
+          text = path.read_text()
+
+          def replace_once(old, new, label):
+              global text
+              if old not in text:
+                  raise SystemExit(f'missing patch anchor: {label}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              "  storedCost: number;\n  cost: number;\n  pricingResolved: boolean;",
+              "  storedCost: number;\n  cost: number;\n  costLowerBound: boolean;\n  pricingResolved: boolean;",
+              'usage-record-cost-lower-bound',
+          )
+          replace_once(
+              "interface DashboardDataset {\n  repo: string;\n  records: UsageRecord[];\n  requests: RequestRecord[];\n  pricing: PricingStatus;\n  lastSync: string;\n}",
+              "interface DashboardDataset {\n  repo: string;\n  records: UsageRecord[];\n  requests: RequestRecord[];\n  devices: DeviceInfo[];\n  pricing: PricingStatus;\n  lastSync: string;\n}",
+              'dashboard-dataset-devices',
+          )
+          replace_once(
+              "  reasoning?: number;\n  messages?: number;\n  costUsd?: number;\n}",
+              "  reasoning?: number;\n  messages?: number;\n  costUsd?: number;\n  costLowerBound?: boolean;\n}",
+              'ledger-row-lower-bound',
+          )
+          replace_once(
+              "    storedCost: Number(row.costUsd || 0),\n    cost: Number(row.costUsd || 0),\n    pricingResolved: false,",
+              "    storedCost: Number(row.costUsd || 0),\n    cost: Number(row.costUsd || 0),\n    costLowerBound: Boolean(row.costLowerBound),\n    pricingResolved: false,",
+              'to-record-lower-bound',
+          )
+
+          pricing_pattern = re.compile(r"async function applyDynamicPricing\(records: UsageRecord\[\]\): Promise<PricingStatus> \{.*?\n\}\n\nconst RAW", re.S)
+          pricing_replacement = '''const LEDGER_PRICING_SOURCE_URL = 'https://models.dev/api.json';
+          async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatus> {
+            // Device-side pricing is the accounting source of truth. Repricing aggregated
+            // rows in the browser can change cache/long-context semantics and drift from
+            // the same machine's CC Switch / CCB totals. Keep the signed-in dashboard on
+            // the exact cost that was calculated request-by-request before encryption.
+            let resolvedRows = 0;
+            let fallbackRows = 0;
+            for (const record of records) {
+              record.cost = record.storedCost;
+              record.pricingResolved = !record.costLowerBound;
+              if (record.costLowerBound) fallbackRows += 1;
+              else resolvedRows += 1;
+            }
+            return {
+              source: 'UsageMesh ledger · CC Switch compatible / models.dev',
+              sourceUrl: LEDGER_PRICING_SOURCE_URL,
+              updatedAt: null,
+              fastMultiplier: 2.5,
+              resolvedRows,
+              fallbackRows,
+            };
+          }
+
+          const RAW'''
+          text, count = pricing_pattern.subn(pricing_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('missing patch anchor: pricing-function')
+
+          replace_once(
+              "    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: 'API 等价估算', icon: Coins, highlight: true, info: false },",
+              "    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: '统一账本估算', icon: Coins, highlight: true, info: false },",
+              'kpi-cost-label',
+          )
+          replace_once(
+              "          <p className=\"text-[11px] leading-relaxed text-[var(--text-muted)]\">基础模型费率从 LiteLLM 官方维护的 model cost map 动态读取，并在浏览器中缓存 12 小时。新模型被 LiteLLM 收录后无需重新发布 UsageMesh。Fast / Priority 在本 Dashboard 的“订阅等价”口径中按 2.5× Standard 计算。</p>\n          <a href={pricing.sourceUrl} target=\"_blank\" rel=\"noreferrer\" className=\"inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline\">查看 LiteLLM cost map <ExternalLink className=\"w-3 h-3\" /></a>",
+              "          <p className=\"text-[11px] leading-relaxed text-[var(--text-muted)]\">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 的订阅等价口径按 2.5× Standard 处理。</p>\n          <a href={pricing.sourceUrl} target=\"_blank\" rel=\"noreferrer\" className=\"inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline\">查看 models.dev 模型目录 <ExternalLink className=\"w-3 h-3\" /></a>",
+              'pricing-modal-copy',
+          )
+          replace_once(
+              "            <span className=\"text-[var(--text-muted)]\">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '使用账本内费用'}</span>",
+              "            <span className=\"text-[var(--text-muted)]\">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>",
+              'pricing-updated-at-copy',
+          )
+
+          helper = '''
+          function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string } {
+            const id = String(ledger.device?.id || ledger.device?.name || 'unknown-device');
+            return {
+              id,
+              name: String(ledger.device?.name || ledger.device?.id || 'Unknown Device'),
+              platform: String(ledger.device?.platform || 'unknown'),
+              arch: String(ledger.device?.arch || ''),
+              updatedAt: String(ledger.generatedAt || ''),
+            };
+          }
+
+          function deviceLabelsFor(ledgers: Ledger[]): Map<string, string> {
+            const identities = ledgers.map(rawDeviceIdentity);
+            const counts = new Map<string, number>();
+            for (const item of identities) counts.set(item.name, (counts.get(item.name) || 0) + 1);
+            const labels = new Map<string, string>();
+            for (const item of identities) {
+              const compact = item.id.replace(/[^a-z0-9]/gi, '').slice(-8) || item.id.slice(-8);
+              labels.set(item.id, (counts.get(item.name) || 0) > 1 ? `${item.name} · ${compact}` : item.name);
+            }
+            return labels;
+          }
+
+          function deviceSyncStatus(updatedAt: string): DeviceInfo['status'] {
+            const ts = Date.parse(updatedAt);
+            if (!Number.isFinite(ts)) return 'offline';
+            const age = Math.max(0, Date.now() - ts);
+            if (age <= 2 * 60_000) return 'online';
+            if (age <= 10 * 60_000) return 'syncing';
+            return 'offline';
+          }
+
+          function buildDeviceRows(ledgers: Ledger[], records: UsageRecord[], labels: Map<string, string>): DeviceInfo[] {
+            const usage = new Map<string, { tokens: number; cost: number; requests: number }>();
+            for (const row of records) {
+              const item = usage.get(row.deviceId) || { tokens: 0, cost: 0, requests: 0 };
+              item.tokens += row.totalTokens;
+              item.cost += row.cost;
+              item.requests += row.requestsCount;
+              usage.set(row.deviceId, item);
+            }
+            const total = [...usage.values()].reduce((sum, item) => sum + item.tokens, 0) || 1;
+            return ledgers.map(ledger => {
+              const identity = rawDeviceIdentity(ledger);
+              const item = usage.get(identity.id) || { tokens: 0, cost: 0, requests: 0 };
+              return {
+                id: identity.id,
+                name: labels.get(identity.id) || identity.name,
+                platform: platformLabel(identity.platform),
+                architecture: archLabel(identity.platform, identity.arch),
+                lastSync: identity.updatedAt ? new Date(identity.updatedAt).toLocaleString() : '—',
+                totalTokens: item.tokens,
+                cost: item.cost,
+                requestsCount: item.requests,
+                sharePercentage: item.tokens / total * 100,
+                status: deviceSyncStatus(identity.updatedAt),
+              };
+            }).sort((a, b) => b.totalTokens - a.totalTokens || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+          }
+
+          '''
+          marker = "async function loadDashboardWithKey(repo: string, key: string): Promise<DashboardDataset> {"
+          if marker not in text:
+              raise SystemExit('missing patch anchor: load-dashboard-marker')
+          text = text.replace(marker, helper + marker, 1)
+
+          old_load = '''  const records = ledgers.flatMap(ledger => (ledger.rows || []).map((row, index) => toRecord(ledger, row, index)));
+            const requests = ledgers
+              .flatMap(ledger => (ledger.requests || []).map((row, index) => toRequestRecord(ledger, row, index)))
+              .sort((a, b) => b.timestampMs - a.timestampMs)
+              .slice(0, 5000);
+            const pricing = await applyDynamicPricing(records);
+            const lastSync = ledgers.map(ledger => String(ledger.generatedAt || '')).filter(Boolean).sort().at(-1) || '';
+            return { repo, records, requests, pricing, lastSync };'''
+          # Normalize indentation in source-independent way.
+          load_pattern = re.compile(r"  const records = ledgers\.flatMap\(ledger => \(ledger\.rows \|\| \[\]\)\.map\(\(row, index\) => toRecord\(ledger, row, index\)\)\);\n  const requests = ledgers\n    \.flatMap\(ledger => \(ledger\.requests \|\| \[\]\)\.map\(\(row, index\) => toRequestRecord\(ledger, row, index\)\)\)\n    \.sort\(\(a, b\) => b\.timestampMs - a\.timestampMs\)\n    \.slice\(0, 5000\);\n  const pricing = await applyDynamicPricing\(records\);\n  const lastSync = ledgers\.map\(ledger => String\(ledger\.generatedAt \|\| ''\)\)\.filter\(Boolean\)\.sort\(\)\.at\(-1\) \|\| '';\n  return \{ repo, records, requests, pricing, lastSync \};")
+          load_replacement = '''  const records = ledgers.flatMap(ledger => (ledger.rows || []).map((row, index) => toRecord(ledger, row, index)));
+            const requests = ledgers
+              .flatMap(ledger => (ledger.requests || []).map((row, index) => toRequestRecord(ledger, row, index)))
+              .sort((a, b) => b.timestampMs - a.timestampMs)
+              .slice(0, 5000);
+            const labels = deviceLabelsFor(ledgers);
+            for (const record of records) record.device = labels.get(record.deviceId) || record.device;
+            for (const request of requests) request.device = labels.get(request.deviceId) || request.device;
+            const pricing = await applyDynamicPricing(records);
+            const devices = buildDeviceRows(ledgers, records, labels);
+            const lastSync = ledgers.map(ledger => String(ledger.generatedAt || '')).filter(Boolean).sort().at(-1) || '';
+            return { repo, records, requests, devices, pricing, lastSync };'''.replace('            ', '  ')
+          text, count = load_pattern.subn(load_replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('missing patch anchor: dashboard-load-body')
+
+          replace_once(
+              "  const [filters, setFilters] = useState<FilterState>({ timeRange:'30d',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });",
+              "  const [filters, setFilters] = useState<FilterState>({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });",
+              'default-all-time',
+          )
+          replace_once(
+              "  const deviceRows = useMemo(() => devices(filtered), [filtered]);\n  const trendRows = useMemo(() => trend(filtered), [filtered]);\n  const allDevices = dataset ? new Set(dataset.records.map(r => r.deviceId)).size : 0;",
+              "  const deviceRows = useMemo(() => dataset?.devices || [], [dataset]);\n  const trendRows = useMemo(() => trend(filtered), [filtered]);\n  const allDevices = dataset?.devices.length || 0;",
+              'device-console-source',
+          )
+          replace_once(
+              "  const resetFilters = () => setFilters({ timeRange:'30d',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });",
+              "  const resetFilters = () => setFilters({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });",
+              'reset-all-time',
+          )
+          replace_once(
+              "    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Dynamic Pricing'];\n    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.pricingResolved ? 'Dynamic' : 'Stored']);",
+              "    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Pricing Status'];\n    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.costLowerBound ? 'Lower bound' : 'Ledger']);",
+              'csv-pricing-status',
+          )
+          replace_once(
+              "title={r.pricingResolved ? '动态价格' : '账本内价格'}",
+              "title={r.costLowerBound ? '账本内费用下界' : '设备端统一账本价格'}",
+              'table-pricing-tooltip',
+          )
+
+          path.write_text(text)
+
+          cargo = Path('rust-cli/Cargo.toml')
+          cargo_text = cargo.read_text()
+          if 'version = "2.2.0"' not in cargo_text:
+              raise SystemExit('unexpected rust-cli version')
+          cargo.write_text(cargo_text.replace('version = "2.2.0"', 'version = "2.2.1"', 1))
+
+          Path('.release/v2.2.1').write_text(
+              'UsageMesh 2.2.1 dashboard parity fix.\n'
+              '- Device console is driven by decrypted ledgers, so zero-usage/new devices remain visible.\n'
+              '- Duplicate device names are disambiguated with a stable short device id.\n'
+              '- Dashboard uses device-side CC Switch-compatible ledger pricing instead of browser repricing.\n'
+              '- Default dashboard scope is All time for parity with local unified-ledger totals.\n'
+          )
+          PY
+          cd web-ui
+          npm version 2.2.1 --no-git-tag-version
+          npm ci
+          npm run typecheck
+          npm run build
+          cd ..
+          cargo check --workspace
+          cargo test --workspace
+      - name: Commit verified fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/fix-dashboard-v221.yml
+          git config user.name 'Atingaii'
+          git config user.email 'zyaiting@email.swu.edu.cn'
+          git add web-ui rust-cli/Cargo.toml Cargo.lock .release/v2.2.1 .github/workflows/fix-dashboard-v221.yml
+          git commit -m 'fix: align device console and pricing totals'
+          git push origin HEAD:main
