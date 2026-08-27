@@ -27,6 +27,7 @@ interface UsageRecord {
   requestsCount: number;
   storedCost: number;
   cost: number;
+  costLowerBound: boolean;
   pricingResolved: boolean;
   updatedAt: string;
 }
@@ -124,6 +125,7 @@ interface DashboardDataset {
   repo: string;
   records: UsageRecord[];
   requests: RequestRecord[];
+  devices: DeviceInfo[];
   pricing: PricingStatus;
   lastSync: string;
 }
@@ -329,28 +331,24 @@ async function fetchMap(): Promise<{ map: CostMap | null; fetchedAt: number | nu
   }
 }
 
+const LEDGER_PRICING_SOURCE_URL = 'https://models.dev/api.json';
 async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatus> {
-  const loaded = await fetchMap();
+  // Device-side pricing is the accounting source of truth. Repricing aggregated
+  // rows in the browser can change cache/long-context semantics and drift from
+  // the same machine's CC Switch / CCB totals. Keep the signed-in dashboard on
+  // the exact cost that was calculated request-by-request before encryption.
   let resolvedRows = 0;
   let fallbackRows = 0;
-
   for (const record of records) {
-    const calculated = loaded.map ? quote(loaded.map, record) : null;
-    if (calculated !== null) {
-      record.cost = calculated;
-      record.pricingResolved = true;
-      resolvedRows += 1;
-    } else {
-      record.cost = record.storedCost;
-      record.pricingResolved = false;
-      fallbackRows += 1;
-    }
+    record.cost = record.storedCost;
+    record.pricingResolved = !record.costLowerBound;
+    if (record.costLowerBound) fallbackRows += 1;
+    else resolvedRows += 1;
   }
-
   return {
-    source: `${loaded.source} · Fast`,
-    sourceUrl: LITELLM_COST_MAP_URL,
-    updatedAt: loaded.fetchedAt ? new Date(loaded.fetchedAt).toISOString() : null,
+    source: 'UsageMesh ledger · CC Switch compatible / models.dev',
+    sourceUrl: LEDGER_PRICING_SOURCE_URL,
+    updatedAt: null,
     fastMultiplier: 2.5,
     resolvedRows,
     fallbackRows,
@@ -401,6 +399,7 @@ interface LedgerRow {
   reasoning?: number;
   messages?: number;
   costUsd?: number;
+  costLowerBound?: boolean;
 }
 
 interface LedgerRequest {
@@ -611,6 +610,7 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
     requestsCount: Number(row.messages || 0),
     storedCost: Number(row.costUsd || 0),
     cost: Number(row.costUsd || 0),
+    costLowerBound: Boolean(row.costLowerBound),
     pricingResolved: false,
     updatedAt: String(ledger.generatedAt || ''),
   };
@@ -656,6 +656,67 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
   };
 }
 
+
+function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string } {
+  const id = String(ledger.device?.id || ledger.device?.name || 'unknown-device');
+  return {
+    id,
+    name: String(ledger.device?.name || ledger.device?.id || 'Unknown Device'),
+    platform: String(ledger.device?.platform || 'unknown'),
+    arch: String(ledger.device?.arch || ''),
+    updatedAt: String(ledger.generatedAt || ''),
+  };
+}
+
+function deviceLabelsFor(ledgers: Ledger[]): Map<string, string> {
+  const identities = ledgers.map(rawDeviceIdentity);
+  const counts = new Map<string, number>();
+  for (const item of identities) counts.set(item.name, (counts.get(item.name) || 0) + 1);
+  const labels = new Map<string, string>();
+  for (const item of identities) {
+    const compact = item.id.replace(/[^a-z0-9]/gi, '').slice(-8) || item.id.slice(-8);
+    labels.set(item.id, (counts.get(item.name) || 0) > 1 ? `${item.name} · ${compact}` : item.name);
+  }
+  return labels;
+}
+
+function deviceSyncStatus(updatedAt: string): DeviceInfo['status'] {
+  const ts = Date.parse(updatedAt);
+  if (!Number.isFinite(ts)) return 'offline';
+  const age = Math.max(0, Date.now() - ts);
+  if (age <= 2 * 60_000) return 'online';
+  if (age <= 10 * 60_000) return 'syncing';
+  return 'offline';
+}
+
+function buildDeviceRows(ledgers: Ledger[], records: UsageRecord[], labels: Map<string, string>): DeviceInfo[] {
+  const usage = new Map<string, { tokens: number; cost: number; requests: number }>();
+  for (const row of records) {
+    const item = usage.get(row.deviceId) || { tokens: 0, cost: 0, requests: 0 };
+    item.tokens += row.totalTokens;
+    item.cost += row.cost;
+    item.requests += row.requestsCount;
+    usage.set(row.deviceId, item);
+  }
+  const total = [...usage.values()].reduce((sum, item) => sum + item.tokens, 0) || 1;
+  return ledgers.map(ledger => {
+    const identity = rawDeviceIdentity(ledger);
+    const item = usage.get(identity.id) || { tokens: 0, cost: 0, requests: 0 };
+    return {
+      id: identity.id,
+      name: labels.get(identity.id) || identity.name,
+      platform: platformLabel(identity.platform),
+      architecture: archLabel(identity.platform, identity.arch),
+      lastSync: identity.updatedAt ? new Date(identity.updatedAt).toLocaleString() : '—',
+      totalTokens: item.tokens,
+      cost: item.cost,
+      requestsCount: item.requests,
+      sharePercentage: item.tokens / total * 100,
+      status: deviceSyncStatus(identity.updatedAt),
+    };
+  }).sort((a, b) => b.totalTokens - a.totalTokens || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+}
+
 async function loadDashboardWithKey(repo: string, key: string): Promise<DashboardDataset> {
   const branches = await loadDeviceIndex(repo);
   const settled = await Promise.allSettled(branches.map(branch => decryptLedger(repo, branch, key)));
@@ -670,9 +731,13 @@ async function loadDashboardWithKey(repo: string, key: string): Promise<Dashboar
     .flatMap(ledger => (ledger.requests || []).map((row, index) => toRequestRecord(ledger, row, index)))
     .sort((a, b) => b.timestampMs - a.timestampMs)
     .slice(0, 5000);
+  const labels = deviceLabelsFor(ledgers);
+  for (const record of records) record.device = labels.get(record.deviceId) || record.device;
+  for (const request of requests) request.device = labels.get(request.deviceId) || request.device;
   const pricing = await applyDynamicPricing(records);
+  const devices = buildDeviceRows(ledgers, records, labels);
   const lastSync = ledgers.map(ledger => String(ledger.generatedAt || '')).filter(Boolean).sort().at(-1) || '';
-  return { repo, records, requests, pricing, lastSync };
+  return { repo, records, requests, devices, pricing, lastSync };
 }
 
 async function unlockDashboard(password: string): Promise<{ dataset: DashboardDataset; key: string }> {
@@ -912,7 +977,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
   const fmt = (num: number) => Math.round(num).toLocaleString('en-US');
   const kpis = [
     { id: 'total', title: '总 Tokens', value: fmt(totalTokens), subtext: '当前筛选范围', icon: Cpu, highlight: false },
-    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: 'API 等价估算', icon: Coins, highlight: true, info: false },
+    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: '统一账本估算', icon: Coins, highlight: true, info: false },
     { id: 'input', title: '输入 Tokens', value: fmt(inputTokens), subtext: 'Fresh input', icon: ArrowDownRight, highlight: false },
     { id: 'cache', title: '缓存读取', value: fmt(cacheReadTokens), subtext: 'Cache read', icon: Database, highlight: false },
     { id: 'output', title: '输出 Tokens', value: fmt(outputTokens), subtext: 'Output', icon: ArrowUpRight, highlight: false },
@@ -937,10 +1002,10 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
             <span className="text-[var(--text-muted)]">Fast mode</span><span className="font-semibold text-[var(--accent-blue)]">{pricing.fastMultiplier.toFixed(1)}× Standard</span>
             <span className="text-[var(--text-muted)]">已解析</span><span>{pricing.resolvedRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
-            <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '使用账本内费用'}</span>
+            <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">基础模型费率从 LiteLLM 官方维护的 model cost map 动态读取，并在浏览器中缓存 12 小时。新模型被 LiteLLM 收录后无需重新发布 UsageMesh。Fast / Priority 在本 Dashboard 的“订阅等价”口径中按 2.5× Standard 计算。</p>
-          <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 LiteLLM cost map <ExternalLink className="w-3 h-3" /></a>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 的订阅等价口径按 2.5× Standard 处理。</p>
+          <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>
       </div>
@@ -1101,8 +1166,8 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
   const handleSort = (field: keyof UsageRecord) => { if (sortField === field) setSortAsc(!sortAsc); else { setSortField(field); setSortAsc(false); } };
   const csv = (value: unknown) => { const s = String(value ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
   const exportToCSV = () => {
-    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Dynamic Pricing'];
-    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.pricingResolved ? 'Dynamic' : 'Stored']);
+    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Pricing Status'];
+    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.costLowerBound ? 'Lower bound' : 'Ledger']);
     const blob = new Blob([[headers,...rows].map(row => row.map(csv).join(',')).join('\n')], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `usagemesh-export-${Date.now()}.csv`; link.click(); URL.revokeObjectURL(url);
   };
@@ -1122,7 +1187,7 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
         <th onClick={() => handleSort('date')} className="px-3.5 py-3 cursor-pointer hover:text-[var(--text-primary)]"><div className="flex items-center gap-1"><span>日期</span><ArrowUpDown className="w-3 h-3" /></div></th>
         <th onClick={() => handleSort('device')} className="px-3.5 py-3 cursor-pointer">设备</th><th onClick={() => handleSort('tool')} className="px-3.5 py-3 cursor-pointer">工具</th><th onClick={() => handleSort('model')} className="px-3.5 py-3 cursor-pointer">模型</th><th onClick={() => handleSort('vendor')} className="px-3.5 py-3 cursor-pointer">模型厂商</th><th onClick={() => handleSort('routeProvider')} className="px-3.5 py-3 cursor-pointer">路由提供商</th><th className="px-3.5 py-3">路由类型</th><th className="px-3.5 py-3">Tier</th><th onClick={() => handleSort('inputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输入 Tokens</th><th onClick={() => handleSort('cacheReadTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Read</th><th onClick={() => handleSort('cacheWriteTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Write</th><th onClick={() => handleSort('outputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输出 Tokens</th><th onClick={() => handleSort('reasoningTokens')} className="px-3.5 py-3 text-right cursor-pointer">Reasoning</th><th onClick={() => handleSort('totalTokens')} className="px-3.5 py-3 text-right cursor-pointer">总 Tokens</th><th onClick={() => handleSort('cost')} className="px-3.5 py-3 text-right cursor-pointer">订阅等价费用</th>
       </tr></thead>
-      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{sorted.map(r => <tr key={r.id} className="hover:bg-[var(--bg-card-hover)] transition h-11"><td className="px-3.5 py-2.5 text-[var(--text-secondary)]">{r.date}</td><td className="px-3.5 py-2.5 font-medium text-[var(--text-primary)]">{r.device}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)] font-semibold">{r.tool}</td><td className="px-3.5 py-2.5 font-bold text-[var(--accent-blue)] max-w-[260px] truncate" title={r.model}>{r.model}</td><td className="px-3.5 py-2.5">{vendorBadge(r.vendor)}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)]">{r.routeProvider}</td><td className="px-3.5 py-2.5">{routeBadge(r.routeType)}</td><td className="px-3.5 py-2.5">{tierBadge(r.tier)}</td><td className="px-3.5 py-2.5 text-right">{r.inputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-emerald-600" title={r.pricingResolved ? '动态价格' : '账本内价格'}>${r.cost.toFixed(4)}</td></tr>)}{!sorted.length && <tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">当前筛选范围暂无记录</td></tr>}</tbody>
+      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{sorted.map(r => <tr key={r.id} className="hover:bg-[var(--bg-card-hover)] transition h-11"><td className="px-3.5 py-2.5 text-[var(--text-secondary)]">{r.date}</td><td className="px-3.5 py-2.5 font-medium text-[var(--text-primary)]">{r.device}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)] font-semibold">{r.tool}</td><td className="px-3.5 py-2.5 font-bold text-[var(--accent-blue)] max-w-[260px] truncate" title={r.model}>{r.model}</td><td className="px-3.5 py-2.5">{vendorBadge(r.vendor)}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)]">{r.routeProvider}</td><td className="px-3.5 py-2.5">{routeBadge(r.routeType)}</td><td className="px-3.5 py-2.5">{tierBadge(r.tier)}</td><td className="px-3.5 py-2.5 text-right">{r.inputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-emerald-600" title={r.costLowerBound ? '账本内费用下界' : '设备端统一账本价格'}>${r.cost.toFixed(4)}</td></tr>)}{!sorted.length && <tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">当前筛选范围暂无记录</td></tr>}</tbody>
     </table></div><div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border-color)] bg-[var(--bg-main)] text-xs"><div className="text-[var(--text-muted)] font-mono">显示 1 - {sorted.length} 共 {sorted.length} 条记录</div><div className="flex items-center gap-1.5"><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronLeft className="w-4 h-4" /></button><span className="px-2 py-0.5 rounded bg-[var(--accent-blue)] text-white font-mono font-bold">1</span><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronRight className="w-4 h-4" /></button></div></div></div>
   </div>;
 };
@@ -1324,7 +1389,7 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('usagemesh:theme') === 'dark');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('usagemesh:sidebar') === 'collapsed');
   const [syncStatus, setSyncStatus] = useState<'synced'|'syncing'|'error'>('synced');
-  const [filters, setFilters] = useState<FilterState>({ timeRange:'30d',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
+  const [filters, setFilters] = useState<FilterState>({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
 
   useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); localStorage.setItem('usagemesh:theme', isDarkMode ? 'dark' : 'light'); }, [isDarkMode]);
   useEffect(() => { localStorage.setItem('usagemesh:sidebar', isSidebarCollapsed ? 'collapsed' : 'expanded'); }, [isSidebarCollapsed]);
@@ -1399,13 +1464,13 @@ function App() {
       && (filters.tier==='all' || row.tier===filters.tier));
   }, [dataset, filters]);
 
-  const deviceRows = useMemo(() => devices(filtered), [filtered]);
+  const deviceRows = useMemo(() => dataset?.devices || [], [dataset]);
   const trendRows = useMemo(() => trend(filtered), [filtered]);
-  const allDevices = dataset ? new Set(dataset.records.map(r => r.deviceId)).size : 0;
+  const allDevices = dataset?.devices.length || 0;
 
   const totals = useMemo(() => ({ totalTokens:sum(filtered,'totalTokens'),cost:sum(filtered,'cost'),input:sum(filtered,'inputTokens'),cacheRead:sum(filtered,'cacheReadTokens'),output:sum(filtered,'outputTokens'),requests:sum(filtered,'requestsCount') }), [filtered]);
 
-  const resetFilters = () => setFilters({ timeRange:'30d',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
+  const resetFilters = () => setFilters({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
   const changeFilter = (key: keyof FilterState, value: string) => setFilters(prev => ({...prev,[key]:value}));
   const title = activeTab==='overview'?'概览':activeTab==='analytics'?'用量分析':activeTab==='devices'?'设备':'聚合数据';
   const lastSync = dataset?.lastSync ? new Date(dataset.lastSync).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
