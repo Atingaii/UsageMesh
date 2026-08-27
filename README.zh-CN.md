@@ -71,7 +71,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务。
+`setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务，默认 **每 1 分钟同步一次**。
 
 第一次全量同步还会先把用户 Fork 的 `main` 自动同步到当前 `Atingaii/UsageMesh` 上游版本，再上传设备数据。因此即使用户很早以前就 Fork 过，也不需要再手工点击 GitHub 的 **Sync fork**。
 

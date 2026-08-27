@@ -46,7 +46,7 @@ enum CommandKind {
         #[arg(long)]
         device: Option<String>,
         /// Snapshot cadence in minutes. No process stays resident between runs.
-        #[arg(long, default_value_t = 15)]
+        #[arg(long, default_value_t = 1)]
         interval: u32,
         /// Dashboard password. Prefer the hidden prompt or USAGEMESH_DASHBOARD_PASSWORD over CLI history.
         #[arg(long)]
@@ -193,6 +193,32 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         }
     }
 
+    // v2.0.3 standardizes the live refresh cadence at one minute. Existing
+    // scheduled installs are migrated in place; devices intentionally created
+    // with --no-schedule stay unscheduled.
+    let mut config = config;
+    if config.interval_minutes != 1 {
+        let had_scheduler = scheduler::is_installed();
+        config.interval_minutes = 1;
+        config::save(&config).context("failed to persist the one-minute sync cadence")?;
+        if had_scheduler {
+            match scheduler::install(1) {
+                Ok(description) => {
+                    if !quiet {
+                        println!("Automatic sync cadence migrated: {description}");
+                    }
+                }
+                Err(error) => {
+                    if !quiet {
+                        eprintln!(
+                            "Could not migrate the existing scheduler to one minute: {error:#}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
 
@@ -216,7 +242,10 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
             .sync_main_with_upstream()
             .context("failed to synchronize the UsageMesh fork with the current upstream main")?;
         if !quiet && !config.repo.eq_ignore_ascii_case(github::UPSTREAM_REPO) {
-            println!("Fork source synchronized with {} main.", github::UPSTREAM_REPO);
+            println!(
+                "Fork source synchronized with {} main.",
+                github::UPSTREAM_REPO
+            );
         }
     }
     if previous_for_compare

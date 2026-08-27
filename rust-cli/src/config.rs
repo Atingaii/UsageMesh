@@ -106,7 +106,7 @@ pub fn new_config(
         dashboard_key: generate_key(),
         device_id: unique_device_id(&name),
         device_name: name,
-        interval_minutes: interval_minutes.clamp(5, 1440),
+        interval_minutes: interval_minutes.clamp(1, 1440),
     })
 }
 
@@ -129,7 +129,7 @@ pub fn from_join(code: &str, token: String, device_name: Option<String>) -> Resu
         dashboard_key: join.dashboard_key,
         device_id: unique_device_id(&name),
         device_name: name,
-        interval_minutes: join.interval_minutes.clamp(5, 1440),
+        interval_minutes: join.interval_minutes.clamp(1, 1440),
     })
 }
 

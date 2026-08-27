@@ -45,6 +45,43 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
+pub fn is_installed() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return Command::new("schtasks.exe")
+            .args(["/Query", "/TN", TASK_NAME])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return launch_agent_path()
+            .map(|path| path.is_file())
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if systemd_dir()
+            .map(|dir| dir.join("usagemesh.timer").is_file())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        return Command::new("crontab")
+            .arg("-l")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout).contains("# usagemesh-usage-sync")
+            })
+            .unwrap_or(false);
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 fn run_ok(mut command: Command, description: &str) -> Result<()> {
     let output = command
         .output()
@@ -69,7 +106,7 @@ fn windows_task_action(exe: &Path) -> String {
 fn install_windows(interval_minutes: u32) -> Result<String> {
     let exe = executable()?;
     let task = windows_task_action(&exe);
-    let interval = interval_minutes.clamp(5, 1440).to_string();
+    let interval = interval_minutes.clamp(1, 1440).to_string();
     let mut cmd = Command::new("schtasks.exe");
     cmd.args([
         "/Create", "/F", "/SC", "MINUTE", "/MO", &interval, "/TN", TASK_NAME, "/TR", &task,
@@ -83,7 +120,7 @@ fn install_windows(interval_minutes: u32) -> Result<String> {
     let _ = run.output();
     Ok(format!(
         "Windows Task Scheduler every {} minutes",
-        interval_minutes.clamp(5, 1440)
+        interval_minutes.clamp(1, 1440)
     ))
 }
 
@@ -141,7 +178,7 @@ fn install_macos(interval_minutes: u32) -> Result<String> {
 </dict></plist>
 "#,
         xml_escape(&exe.to_string_lossy()),
-        interval_minutes.clamp(5, 1440) * 60
+        interval_minutes.clamp(1, 1440) * 60
     );
     fs::write(&path, plist)?;
     let domain = format!("gui/{}", mac_uid()?);
@@ -153,7 +190,7 @@ fn install_macos(interval_minutes: u32) -> Result<String> {
     run_ok(bootstrap, "macOS launchd registration")?;
     Ok(format!(
         "macOS launchd every {} minutes",
-        interval_minutes.clamp(5, 1440)
+        interval_minutes.clamp(1, 1440)
     ))
 }
 
@@ -197,7 +234,7 @@ fn try_install_systemd(interval_minutes: u32) -> Result<String> {
     );
     let timer = format!(
         "[Unit]\nDescription=Periodic UsageMesh usage snapshot\n\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec={}min\nRandomizedDelaySec=45\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n",
-        interval_minutes.clamp(5, 1440)
+        interval_minutes.clamp(1, 1440)
     );
     fs::write(dir.join("usagemesh.service"), service)?;
     fs::write(dir.join("usagemesh.timer"), timer)?;
@@ -210,14 +247,14 @@ fn try_install_systemd(interval_minutes: u32) -> Result<String> {
     run_ok(enable, "systemd user timer registration")?;
     Ok(format!(
         "systemd user timer every {} minutes",
-        interval_minutes.clamp(5, 1440)
+        interval_minutes.clamp(1, 1440)
     ))
 }
 
 #[cfg(target_os = "linux")]
 fn cron_cadence(interval_minutes: u32) -> (&'static str, u32) {
     match interval_minutes {
-        5..=59 => ("minutes", interval_minutes),
+        1..=59 => ("minutes", interval_minutes),
         60 => ("hour", 1),
         value if value >= 120 && value % 60 == 0 && value / 60 <= 23 => ("hours", value / 60),
         1440 => ("day", 1),
@@ -353,6 +390,7 @@ mod linux_tests {
 
     #[test]
     fn cron_fallback_uses_safe_supported_cadences() {
+        assert_eq!(cron_cadence(1), ("minutes", 1));
         assert_eq!(cron_cadence(15), ("minutes", 15));
         assert_eq!(cron_cadence(60), ("hour", 1));
         assert_eq!(cron_cadence(120), ("hours", 2));

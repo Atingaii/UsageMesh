@@ -73,7 +73,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native periodic scheduler unless you pass `--no-schedule`.
+`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **one-minute cadence** unless you pass `--no-schedule`.
 
 A full sync also synchronizes the fork's `main` branch with the current `Atingaii/UsageMesh` upstream before publishing usage data. This is the automatic repair path for users who forked an older version: they do not need to click GitHub's **Sync fork** button manually.
 
