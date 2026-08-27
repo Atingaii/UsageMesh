@@ -990,15 +990,15 @@ const FilterBar: React.FC<FilterBarProps> = ({ filters, options, onChangeFilter,
 
 interface KpiCardsProps {
   totalTokens: number; cost: number; inputTokens: number; cacheReadTokens: number;
-  outputTokens: number; requestsCount: number; pricing: PricingStatus;
+  outputTokens: number; requestsCount: number; pricing: PricingStatus; costLowerBound: boolean;
 }
 
-const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cacheReadTokens, outputTokens, requestsCount, pricing }) => {
+const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cacheReadTokens, outputTokens, requestsCount, pricing, costLowerBound }) => {
   const [showPricingModal, setShowPricingModal] = useState(false);
   const fmt = (num: number) => Math.round(num).toLocaleString('en-US');
   const kpis = [
     { id: 'total', title: '总 Tokens', value: fmt(totalTokens), subtext: '当前筛选范围', icon: Cpu, highlight: false },
-    { id: 'cost', title: '估算费用', value: `$${cost.toFixed(4)}`, subtext: '统一账本估算', icon: Coins, highlight: true, info: false },
+    { id: 'cost', title: '估算费用', value: `${costLowerBound ? '≥' : ''}$${cost.toFixed(4)}`, subtext: costLowerBound ? '统一账本估算 · 存在未完全计价项' : '统一账本估算 · 已完整计价', icon: Coins, highlight: true, info: true },
     { id: 'input', title: '输入 Tokens', value: fmt(inputTokens), subtext: 'Fresh input', icon: ArrowDownRight, highlight: false },
     { id: 'cache', title: '缓存读取', value: fmt(cacheReadTokens), subtext: 'Cache read', icon: Database, highlight: false },
     { id: 'output', title: '输出 Tokens', value: fmt(outputTokens), subtext: 'Output', icon: ArrowUpRight, highlight: false },
@@ -1025,7 +1025,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev，并对 CodeBuddy/WorkBuddy 等客户端的内部模型后缀（如 `-ioa`）做保守别名归一；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
           <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>
@@ -1714,7 +1714,7 @@ function App() {
   const trendRows = useMemo(() => trend(filtered), [filtered]);
   const allDevices = dataset?.devices.length || 0;
 
-  const totals = useMemo(() => ({ totalTokens:sum(filtered,'totalTokens'),cost:sum(filtered,'cost'),input:sum(filtered,'inputTokens'),cacheRead:sum(filtered,'cacheReadTokens'),output:sum(filtered,'outputTokens'),requests:sum(filtered,'requestsCount') }), [filtered]);
+  const totals = useMemo(() => ({ totalTokens:sum(filtered,'totalTokens'),cost:sum(filtered,'cost'),input:sum(filtered,'inputTokens'),cacheRead:sum(filtered,'cacheReadTokens'),output:sum(filtered,'outputTokens'),requests:sum(filtered,'requestsCount'),costLowerBound:filtered.some(row => row.costLowerBound) }), [filtered]);
 
   const resetFilters = () => setFilters({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
   const changeFilter = (key: keyof FilterState, value: string) => setFilters(prev => ({...prev,[key]:value}));
@@ -1729,10 +1729,10 @@ function App() {
     <div className="flex-1 flex flex-col h-full overflow-y-auto w-full">
       <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与统一费用估算" repoBadge="" pricingBadge="" lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
       <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1920px] w-full mx-auto">
-        {activeTab==='overview' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><TrendChart isDarkMode={isDarkMode} data={trendRows} /><BreakdownCards records={filtered} /></>}
+        {activeTab==='overview' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} costLowerBound={totals.costLowerBound} /><TrendChart isDarkMode={isDarkMode} data={trendRows} /><BreakdownCards records={filtered} /></>}
         {activeTab==='analytics' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><UsageAnalysisView isDarkMode={isDarkMode} records={filtered} requests={filteredRequests} /></>}
         {activeTab==='devices' && <DevicesView devices={deviceRows} />}
-        {activeTab==='aggregated' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><AggregatedDataView records={filtered} /></>}
+        {activeTab==='aggregated' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} costLowerBound={totals.costLowerBound} /><AggregatedDataView records={filtered} /></>}
       </main>
     </div>
   </div>;

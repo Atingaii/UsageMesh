@@ -165,7 +165,7 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 ## 费用口径
 
-Dashboard 展示的是**API 等价美元费用估算**，不是供应商发票，也不把 Fast / Priority 的订阅额度倍率混入美元费用。计费策略版本变化时，设备下一次同步会自动执行一次全量历史重算，避免旧账本日期继续保留旧费用。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
+Dashboard 展示的是**API 等价美元费用估算**，不是供应商发票，也不把 Fast / Priority 的订阅额度倍率混入美元费用。计费策略版本变化时，设备下一次同步会自动执行一次全量历史重算，避免旧账本日期继续保留旧费用。CodeBuddy/WorkBuddy 这类客户端的内部模型后缀（例如 `deepseek-v4-flash-ioa`）会在精确匹配失败后映射到对应的 canonical 模型；仍无法可靠计价的记录会让总费用显示 `≥`，不会伪装成精确值。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
 
 ## 友情链接
 

@@ -20,7 +20,7 @@ use serde::Deserialize;
 use crate::model::{Metrics, PricingInfo};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
-pub const PRICING_POLICY: &str = "api-equivalent-estimate-v2";
+pub const PRICING_POLICY: &str = "api-equivalent-estimate-v3";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
 const GPT56_LONG_INPUT_MULTIPLIER: f64 = 2.0;
@@ -113,7 +113,24 @@ fn normalize_model_id(model_id: &str) -> String {
 
 fn strip_date_suffix(value: &str) -> Option<String> {
     let (base, suffix) = value.rsplit_once('-')?;
-    (suffix.len() == 8 && suffix.chars().all(|ch| ch.is_ascii_digit())).then(|| base.to_string())
+    ((suffix.len() == 8 || suffix.len() == 6) && suffix.chars().all(|ch| ch.is_ascii_digit()))
+        .then(|| base.to_string())
+}
+
+fn lookup_aliases(normalized: &str) -> Vec<String> {
+    let mut aliases = vec![normalized.to_string()];
+    if let Some(value) = normalized.strip_suffix("-ioa") {
+        aliases.push(value.to_string());
+    }
+    let snapshot = aliases.clone();
+    for value in snapshot {
+        if let Some(base) = strip_date_suffix(&value) {
+            aliases.push(base);
+        }
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
 }
 
 fn provider_preference(model: &str, provider: &str) -> u8 {
@@ -271,17 +288,11 @@ impl PriceBook {
 
     fn lookup(&self, model_id: &str) -> Option<EffectivePricing> {
         let normalized = normalize_model_id(model_id);
-        if let Some(guarded) = guarded_pricing(&normalized) {
-            return Some(guarded);
-        }
-        if let Some(pricing) = self.catalog.get(&normalized) {
-            return Some(*pricing);
-        }
-        if let Some(base) = strip_date_suffix(&normalized) {
-            if let Some(guarded) = guarded_pricing(&base) {
+        for alias in lookup_aliases(&normalized) {
+            if let Some(guarded) = guarded_pricing(&alias) {
                 return Some(guarded);
             }
-            if let Some(pricing) = self.catalog.get(&base) {
+            if let Some(pricing) = self.catalog.get(&alias) {
                 return Some(*pricing);
             }
         }
@@ -418,6 +429,34 @@ mod tests {
         );
         let expected = 280_000.0 * 5e-6 * 2.0 + 10_000.0 * 0.5e-6 * 2.0 + 10_000.0 * 30e-6 * 1.5;
         assert!((quote.cost_usd - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn codebuddy_ioa_alias_uses_canonical_models_dev_price() {
+        let mut catalog = HashMap::new();
+        catalog.insert(
+            "deepseek-v4-flash".to_string(),
+            EffectivePricing {
+                input: 0.14e-6,
+                output: 0.28e-6,
+                cache_read: 0.0028e-6,
+                cache_write: 0.0,
+                long_context_threshold: None,
+                long_input_multiplier: 1.0,
+                long_output_multiplier: 1.0,
+            },
+        );
+        let book = PriceBook {
+            catalog,
+            catalog_state: "test",
+        };
+        let quote = book.quote(
+            "deepseek-v4-flash-ioa",
+            Some("standard"),
+            &metrics(1_000_000, 0, 0, 1_000_000),
+        );
+        assert!((quote.cost_usd - 0.42).abs() < 1e-9);
+        assert!(!quote.lower_bound);
     }
 
     #[test]
