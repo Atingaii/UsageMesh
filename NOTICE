@@ -1,0 +1,25 @@
+UsageMesh
+Copyright (c) 2026 UsageMesh contributors
+
+UsageMesh is a clean standalone continuation derived from:
+  Atingaii/token-monitor
+  https://github.com/Atingaii/token-monitor
+  MIT License, Copyright (c) 2026 Atingaii contributors
+
+That project was itself derived from:
+  Javis603/token-monitor
+  https://github.com/Javis603/token-monitor
+  MIT License, Copyright (c) 2026 Javis
+
+Core multi-client discovery, parsing, deduplication, model normalization,
+scanner behavior and canonical token-bucket semantics are delegated to:
+  junhoyeo/tokscale v4.14.0
+  https://github.com/junhoyeo/tokscale/tree/v4.14.0
+  MIT License, Copyright (c) 2025 Junho Yeo
+
+Codex request-level service-tier evidence includes ideas adapted from:
+  falyx6851-byte/codex-monitor
+  https://github.com/falyx6851-byte/codex-monitor
+  MIT License, Copyright (c) 2026 falyx6851-byte
+
+Third-party project names remain the property of their respective owners.

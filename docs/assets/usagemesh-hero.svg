@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="520" viewBox="0 0 1600 520" role="img" aria-labelledby="title desc">
+  <title id="title">UsageMesh</title><desc id="desc">AI coding usage, across every device.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07111f"/><stop offset=".55" stop-color="#0b1730"/><stop offset="1" stop-color="#101c33"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset=".52" stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="18"/></filter>
+  </defs>
+  <rect width="1600" height="520" rx="34" fill="url(#bg)"/>
+  <circle cx="1320" cy="110" r="170" fill="#2563eb" opacity=".13" filter="url(#glow)"/><circle cx="1110" cy="390" r="150" fill="#06b6d4" opacity=".10" filter="url(#glow)"/>
+  <g opacity=".48" stroke="#93c5fd" stroke-width="2"><path d="M1080 120L1240 86L1378 172L1326 326L1156 378L1010 276Z"/><path d="M1080 120L1156 378M1240 86L1326 326M1010 276L1378 172M1080 120L1326 326M1240 86L1156 378" opacity=".48"/></g>
+  <g fill="url(#accent)"><circle cx="1080" cy="120" r="10"/><circle cx="1240" cy="86" r="13"/><circle cx="1378" cy="172" r="9"/><circle cx="1326" cy="326" r="12"/><circle cx="1156" cy="378" r="10"/><circle cx="1010" cy="276" r="8"/></g>
+  <g transform="translate(104 100)">
+    <rect width="74" height="74" rx="22" fill="#0f2446" stroke="#3b82f6" stroke-opacity=".55"/><path d="M20 48L36 26L52 48M24 42H48" fill="none" stroke="url(#accent)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="48" r="4.5" fill="#60a5fa"/><circle cx="36" cy="26" r="4.5" fill="#22d3ee"/><circle cx="52" cy="48" r="4.5" fill="#a78bfa"/>
+    <text x="98" y="54" fill="#f8fafc" font-family="Inter,ui-sans-serif,system-ui,sans-serif" font-size="64" font-weight="760" letter-spacing="-2">UsageMesh</text>
+    <text x="0" y="132" fill="#cbd5e1" font-family="Inter,ui-sans-serif,system-ui,sans-serif" font-size="27" font-weight="500">AI coding usage, across every device.</text>
+    <text x="0" y="181" fill="#8191aa" font-family="Inter,ui-sans-serif,system-ui,sans-serif" font-size="19">Local-first · encrypted sync · GitHub Pages · no server</text>
+    <g transform="translate(0 226)" font-family="Inter,ui-sans-serif,system-ui,sans-serif" font-size="16" font-weight="600"><rect width="126" height="42" rx="21" fill="#0f203b" stroke="#294363"/><text x="63" y="27" fill="#dbeafe" text-anchor="middle">macOS</text><g transform="translate(142)"><rect width="126" height="42" rx="21" fill="#0f203b" stroke="#294363"/><text x="63" y="27" fill="#dbeafe" text-anchor="middle">Windows</text></g><g transform="translate(284)"><rect width="126" height="42" rx="21" fill="#0f203b" stroke="#294363"/><text x="63" y="27" fill="#dbeafe" text-anchor="middle">Linux</text></g></g>
+  </g>
+</svg>

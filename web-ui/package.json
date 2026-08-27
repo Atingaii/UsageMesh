@@ -1,0 +1,26 @@
+{
+  "name": "usagemesh-dashboard",
+  "private": true,
+  "version": "1.1.1",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "recharts": "3.2.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.12",
+    "@types/node": "22.14.0",
+    "@types/react": "19.0.12",
+    "@types/react-dom": "19.0.4",
+    "@vitejs/plugin-react": "4.4.1",
+    "tailwindcss": "4.1.12",
+    "typescript": "5.8.3",
+    "vite": "6.1.0"
+  }
+}

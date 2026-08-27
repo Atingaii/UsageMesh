@@ -1,0 +1,33 @@
+[package]
+name = "usagemesh"
+version = "2.0.0"
+edition = "2021"
+authors = ["UsageMesh contributors"]
+license = "MIT"
+description = "Local-first, serverless AI coding usage analytics across devices"
+repository = "https://github.com/Atingaii/UsageMesh"
+
+[[bin]]
+name = "usagemesh"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+dirs = "6"
+hex = "0.4"
+hostname = "0.4"
+pbkdf2 = "0.12"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "time"] }
+toml = "0.8"
+walkdir = "2"
+tokscale-core = { git = "https://github.com/junhoyeo/tokscale", tag = "v4.14.0", package = "tokscale-core" }
