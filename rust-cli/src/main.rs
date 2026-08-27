@@ -8,6 +8,7 @@ mod model;
 mod pricing;
 mod provider;
 mod scheduler;
+mod update;
 
 use std::fs;
 use std::process::Command;
@@ -178,6 +179,20 @@ fn publish_dashboard_access(config: &Config, password: &str) -> Result<String> {
 
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let config = config::load()?;
+
+    // Every normal scheduler run doubles as a lightweight update check. Stable
+    // releases are checksum-verified and installed in place, so users configure
+    // UsageMesh once and keep their existing sync cadence across upgrades.
+    match update::maybe_auto_update(&config, full, quiet) {
+        Ok(update::AutoUpdateOutcome::Restarted) => return Ok(()),
+        Ok(update::AutoUpdateOutcome::Current) => {}
+        Err(error) => {
+            if !quiet {
+                eprintln!("Auto-update check skipped: {error:#}");
+            }
+        }
+    }
+
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
 
