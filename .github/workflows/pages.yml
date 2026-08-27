@@ -7,6 +7,8 @@ on:
       - 'web-ui/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * *'
 
 permissions:
   contents: read
@@ -25,13 +27,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve latest dashboard source
+        shell: bash
+        run: |
+          set -euo pipefail
+          upstream='Atingaii/UsageMesh'
+          if [ "$GITHUB_REPOSITORY" = "$upstream" ]; then
+            source_sha="$GITHUB_SHA"
+          else
+            rm -rf /tmp/usagemesh-upstream
+            git clone --depth 1 --filter=blob:none --sparse "https://github.com/${upstream}.git" /tmp/usagemesh-upstream
+            git -C /tmp/usagemesh-upstream sparse-checkout set web-ui
+            source_sha="$(git -C /tmp/usagemesh-upstream rev-parse HEAD)"
+            rm -rf web-ui
+            cp -a /tmp/usagemesh-upstream/web-ui ./web-ui
+          fi
+          echo "USAGEMESH_DASHBOARD_SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+          echo "Dashboard source: ${upstream}@${source_sha}"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: web-ui/package.json
 
-      - name: Validate materialized dashboard source
+      - name: Validate dashboard source
         working-directory: web-ui
         shell: bash
         run: |
@@ -46,6 +67,8 @@ jobs:
           grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
           grep -q "sessionStorage" src/app.tsx
           grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
+          ! grep -q "isBundledDemoRepo" src/app.tsx
+          ! grep -q "demo/access.json" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
           ! grep -q "高级用量分析" src/app.tsx
           ! grep -q "setPassword(nextPassword)" src/app.tsx
@@ -59,6 +82,18 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+
+      - name: Write deployment provenance
+        shell: bash
+        run: |
+          cat > web-ui/dist/build-info.json <<EOF
+          {
+            "workspaceRepository": "${GITHUB_REPOSITORY}",
+            "dashboardSource": "Atingaii/UsageMesh",
+            "dashboardSourceSha": "${USAGEMESH_DASHBOARD_SOURCE_SHA}",
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
 
       - name: Refresh live device index when available
         shell: bash
