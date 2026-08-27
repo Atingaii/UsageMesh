@@ -26,7 +26,7 @@ UsageMesh 解决的是一个具体问题：当 Codex、Claude Code 等 AI Coding
 
 Fork `Atingaii/UsageMesh` 到自己的 GitHub 账号并保持 **Public**。纯前端 Dashboard 需要在没有服务器代理的情况下读取密文；实际设备明细在上传前已经加密。
 
-GitHub 对新 Fork 的 Actions 有平台级安全限制，不会自动直接执行上游工作流。因此第一次需要进入 Fork 的 **Actions** 页面启用工作流，然后手动运行一次 **Deploy Dashboard**。工作流会尝试自动启用 Pages；如果 GitHub 拒绝，则进入 **Settings → Pages → Source → GitHub Actions** 后重新运行即可。
+GitHub 对新 Fork 的 Actions 有平台级安全限制，不会自动直接执行上游工作流。因此第一次需要进入 Fork 的 **Actions** 页面启用工作流，然后手动运行一次 **Deploy Dashboard**。如果 Pages 尚未启用，则进入 **Settings → Pages → Source → GitHub Actions**，随后重新运行 **Deploy Dashboard**。
 
 ### 2. 安装
 
@@ -52,7 +52,7 @@ usagemesh setup
 usagemesh dashboard
 ```
 
-地址由 Fork 自动决定，例如 `https://alice.github.io/UsageMesh/`。
+地址由 Fork 自动决定，例如 `https://alice.github.io/UsageMesh/`。请优先使用 `usagemesh dashboard` 输出的地址，不要手工猜测大小写或仓库路径。
 
 ## github_pat 怎么配置
 
@@ -69,7 +69,7 @@ usagemesh setup
 1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**。
 2. `Resource owner` 选择自己的账号。
 3. `Repository access` 选择 **Only select repositories**，只勾选自己的 `UsageMesh` Fork。
-4. `Repository permissions` 至少设置 **Contents → Read and write**；若可用且希望 API 尝试初始化 Pages，可再授予 **Pages → Read and write**。
+4. `Repository permissions` 设置 **Contents → Read and write**。UsageMesh 的设备同步不需要额外的仓库权限。
 5. 设置合理的过期时间并生成 Token。
 6. 运行 `usagemesh setup`，在隐藏输入提示处粘贴 `github_pat_...`。
 
@@ -91,6 +91,29 @@ usagemesh invite
 usagemesh sync --full
 usagemesh status
 ```
+
+## GitHub Pages 打不开怎么办
+
+先确认 Fork 的 **Actions → Deploy Dashboard** 最后一次运行是绿色 `success`，然后确认 **Settings → Pages** 的 Source 为 **GitHub Actions**。
+
+使用 CLI 输出的准确地址：
+
+```bash
+usagemesh dashboard
+```
+
+如果仍然打不开，可以检查：
+
+```bash
+curl -I "$(usagemesh dashboard)"
+nslookup github.io
+```
+
+- 返回 `200`：Pages 已在线，优先尝试无痕窗口或强制刷新。
+- 返回 `404`：确认仓库名称大小写和 Pages 部署；新启用 Pages 时也可能需要短暂传播时间。
+- `Could not resolve host` / DNS 失败：这是当前网络到 `github.io` 的解析或可达性问题，换网络或 DNS 后再试，与 UsageMesh 数据同步本身无关。
+
+Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依赖固定的 `/UsageMesh/` 资源前缀。
 
 ## 为什么分“概览”和“分析”
 
