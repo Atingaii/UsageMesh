@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 7;
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_billing_channel() -> String {
+    "unknown".to_string()
 }
 
 /// Additive accounting metrics only. These are the dimensions Tokscale exposes
@@ -45,6 +49,10 @@ impl Metrics {
 #[serde(rename_all = "camelCase")]
 pub struct UsageRow {
     pub date: String,
+    /// Start of the local request bucket as Unix milliseconds. Rows are grouped
+    /// per minute so custom dashboard ranges can use minute-accurate boundaries.
+    #[serde(default)]
+    pub timestamp_ms: i64,
     pub client: String,
     /// Raw provider/routing identity emitted by the source parser. Kept for auditability.
     pub provider: String,
@@ -54,6 +62,9 @@ pub struct UsageRow {
     pub route_provider: String,
     /// One of official, cloud, aggregator, relay, inference-provider, self-hosted, custom, unknown.
     pub route_type: String,
+    /// One of official-api, official-subscription, third-party, unknown.
+    #[serde(default = "default_billing_channel")]
+    pub billing_channel: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
@@ -98,6 +109,8 @@ pub struct RequestDetail {
     pub upstream_vendor: String,
     pub route_provider: String,
     pub route_type: String,
+    #[serde(default = "default_billing_channel")]
+    pub billing_channel: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,

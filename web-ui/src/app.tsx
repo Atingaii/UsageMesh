@@ -7,6 +7,7 @@ import './index.css';
 interface UsageRecord {
   id: string;
   date: string;
+  timestampMs: number;
   device: string;
   deviceId: string;
   platform: string;
@@ -16,6 +17,7 @@ interface UsageRecord {
   vendor: string;
   routeProvider: string;
   routeType: string;
+  billingChannel: string;
   rawProvider: string;
   tier: string;
   inputTokens: number;
@@ -45,6 +47,7 @@ interface RequestRecord {
   vendor: string;
   routeProvider: string;
   routeType: string;
+  billingChannel: string;
   rawProvider: string;
   tier: string;
   reasoningEffort: string;
@@ -135,18 +138,9 @@ type ActiveTab = 'overview' | 'analytics' | 'devices' | 'aggregated';
 
 const LITELLM_COST_MAP_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 const CACHE_KEY = 'usagemesh:litellm-cost-map:v1';
-function subscriptionSpeedMultiplier(record: UsageRecord): number {
-  const tier = String(record.tier || '').trim().toLowerCase();
-  if (record.tool.trim().toLowerCase() !== 'codex' || (tier !== 'fast' && tier !== 'priority')) {
-    return 1;
-  }
-
-  const model = normalizeModel(record.model);
-  // OpenAI Codex / ChatGPT Work official Speed rate card (2026-08):
-  // GPT-5.6 and GPT-5.5 Fast consume 2.5x Standard credits; GPT-5.4 consumes 2x.
-  // API-key Priority/Fast is deliberately NOT inferred here: it has separate API pricing.
-  if (model.startsWith('gpt-5.6') || model.startsWith('gpt-5.5')) return 2.5;
-  if (model.startsWith('gpt-5.4')) return 2;
+function subscriptionSpeedMultiplier(_record: UsageRecord): number {
+  // Tier stays visible as request metadata, but this USD compatibility estimate
+  // deliberately uses the same relay card for Standard, Fast and Priority.
   return 1;
 }
 
@@ -274,9 +268,8 @@ function quote(map: CostMap, record: UsageRecord): number | null {
   cacheWrite ??= input;
   reasoning ??= output;
 
-  // UsageMesh's dashboard is subscription-equivalent usage, not the API
-  // Priority price card. OpenAI's ChatGPT/Codex Fast mode consumes 2.5x the
-  // Standard rate, so Fast and the raw service-tier label Priority use 2.5x.
+  // The dormant browser fallback follows the same no-tier-multiplier rule as
+  // the signed device ledger. The ledger remains the accounting source of truth.
   const multiplier = subscriptionSpeedMultiplier(record);
 
   const cost = (
@@ -346,7 +339,7 @@ async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatu
     else resolvedRows += 1;
   }
   return {
-    source: 'UsageMesh ledger · OpenAI official cards / models.dev fallback',
+    source: 'UsageMesh ledger · GPT-5.6 Sol undiscounted relay compatibility card',
     sourceUrl: LEDGER_PRICING_SOURCE_URL,
     updatedAt: null,
     fastMultiplier: 1.0,
@@ -385,11 +378,13 @@ interface LedgerEnvelope {
 
 interface LedgerRow {
   date?: string;
+  timestampMs?: number;
   client?: string;
   provider?: string;
   upstreamVendor?: string;
   routeProvider?: string;
   routeType?: string;
+  billingChannel?: string;
   model?: string;
   tier?: string | null;
   input?: number;
@@ -409,6 +404,7 @@ interface LedgerRequest {
   upstreamVendor?: string;
   routeProvider?: string;
   routeType?: string;
+  billingChannel?: string;
   model?: string;
   tier?: string | null;
   reasoningEffort?: string | null;
@@ -572,17 +568,23 @@ function tierLabel(value: string | null | undefined): string {
   return value ? String(value) : 'Standard';
 }
 
-function normalizedRoute(row: LedgerRow): { provider: string; type: string; label: string } {
+function normalizedRoute(row: LedgerRow): { provider: string; type: string; label: string; billing: string } {
   const provider = String(row.routeProvider || row.provider || 'unknown').trim().toLowerCase();
   const type = String(row.routeType || 'unknown').trim().toLowerCase();
+  const billing = String(row.billingChannel || 'unknown').trim().toLowerCase();
   const vendor = String(row.upstreamVendor || '').trim().toLowerCase();
   if (type === 'official') {
     const vendorLabel = vendor ? vendor.replace(/^./, c => c.toUpperCase()) : '';
-    return { provider: 'official', type: 'official', label: vendorLabel ? `官方 · ${vendorLabel}` : '官方' };
+    const label = billing === 'official-subscription'
+      ? '官方 · ChatGPT 订阅'
+      : billing === 'official-api'
+        ? (vendor === 'openai' ? '官方 · OpenAI API' : `官方 API${vendorLabel ? ` · ${vendorLabel}` : ''}`)
+        : (vendorLabel ? `官方 · ${vendorLabel}` : '官方');
+    return { provider: label, type: 'official', label, billing };
   }
   // Never promote a raw provider name such as `openai` to official in the browser.
   // Only the device-side local base-URL mapper may set routeType=official.
-  return { provider: provider || 'unknown', type: type || 'unknown', label: String(row.routeProvider || row.provider || '未知') };
+  return { provider: provider || 'unknown', type: type || 'unknown', label: String(row.routeProvider || row.provider || '未知'), billing };
 }
 
 function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
@@ -599,6 +601,7 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
   return {
     id: `${deviceId}:${row.date || ''}:${row.client || ''}:${row.model || ''}:${index}`,
     date: String(row.date || ''),
+    timestampMs: Number(row.timestampMs || 0),
     device: deviceName,
     deviceId,
     platform: platformLabel(platform),
@@ -608,6 +611,7 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
     vendor: String(row.upstreamVendor || 'Unknown'),
     routeProvider: route.provider,
     routeType: route.type,
+    billingChannel: route.billing,
     rawProvider: String(row.provider || 'unknown'),
     tier: tierLabel(row.tier),
     inputTokens: input,
@@ -648,6 +652,7 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
     vendor: String(row.upstreamVendor || 'Unknown'),
     routeProvider: route.label,
     routeType: route.type,
+    billingChannel: route.billing,
     rawProvider: String(row.provider || 'unknown'),
     tier: tierLabel(row.tier),
     reasoningEffort: String(row.reasoningEffort || ''),
@@ -937,9 +942,9 @@ const FilterBar: React.FC<FilterBarProps> = ({ filters, options, onChangeFilter,
           </div>
           {filters.timeRange === 'custom' && (
             <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--bg-main)] border border-[var(--border-color)] text-xs font-mono text-[var(--text-secondary)]">
-              <input type="date" value={filters.customStartDate || ''} onChange={e => onChangeFilter('customStartDate', e.target.value)} className="bg-transparent outline-none" />
+              <input aria-label="自定义开始时间" title="开始时间（浏览器本地时区，精确到分钟）" type="datetime-local" step="60" max={filters.customEndDate || undefined} value={filters.customStartDate || ''} onChange={e => onChangeFilter('customStartDate', e.target.value)} className="w-[176px] bg-transparent outline-none" />
               <span className="text-[var(--text-muted)]">-</span>
-              <input type="date" value={filters.customEndDate || ''} onChange={e => onChangeFilter('customEndDate', e.target.value)} className="bg-transparent outline-none" />
+              <input aria-label="自定义结束时间" title="结束时间（浏览器本地时区，包含所选分钟）" type="datetime-local" step="60" min={filters.customStartDate || undefined} value={filters.customEndDate || ''} onChange={e => onChangeFilter('customEndDate', e.target.value)} className="w-[176px] bg-transparent outline-none" />
             </div>
           )}
           <button onClick={onResetFilters} title="重置所有筛选" className="inline-flex items-center gap-1 px-2 py-1 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition cursor-pointer">
@@ -986,7 +991,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
   const fmt = (num: number) => Math.round(num).toLocaleString('en-US');
   const kpis = [
     { id: 'total', title: '总 Tokens', value: fmt(totalTokens), subtext: '当前筛选范围', icon: Cpu, highlight: false },
-    { id: 'cost', title: '估算费用', value: `${costLowerBound ? '≥' : ''}$${cost.toFixed(4)}`, subtext: costLowerBound ? '统一账本估算 · 存在未完全计价项' : '统一账本估算 · 已完整计价', icon: Coins, highlight: true, info: true },
+    { id: 'cost', title: '估算费用', value: `${costLowerBound ? '≥' : ''}$${cost.toFixed(4)}`, subtext: costLowerBound ? '未降价兼容价卡 · 存在未完全计价项' : '未降价兼容价卡 · 已完整计价', icon: Coins, highlight: true, info: true },
     { id: 'input', title: '输入 Tokens', value: fmt(inputTokens), subtext: 'Fresh input', icon: ArrowDownRight, highlight: false },
     { id: 'cache', title: '缓存读取', value: fmt(cacheReadTokens), subtext: 'Cache read', icon: Database, highlight: false },
     { id: 'output', title: '输出 Tokens', value: fmt(outputTokens), subtext: 'Output', icon: ArrowUpRight, highlight: false },
@@ -1004,7 +1009,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
 
     {showPricingModal && <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs" onClick={() => setShowPricingModal(false)}>
       <div className="w-full max-w-md bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]"><div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]"><Coins className="w-4 h-4 text-[var(--accent-blue)]" /><span>动态模型价格</span></div><button onClick={() => setShowPricingModal(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><X className="w-4 h-4" /></button></div>
+        <div className="flex items-center justify-between pb-2 border-b border-[var(--border-color)]"><div className="flex items-center gap-2 text-xs font-bold text-[var(--text-primary)]"><Coins className="w-4 h-4 text-[var(--accent-blue)]" /><span>模型估算价格</span></div><button onClick={() => setShowPricingModal(false)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"><X className="w-4 h-4" /></button></div>
         <div className="text-xs space-y-3 text-[var(--text-secondary)] font-mono">
           <div className="grid grid-cols-[120px_1fr] gap-2 bg-[var(--bg-main)] p-3 rounded-lg border border-[var(--border-color)]">
             <span className="text-[var(--text-muted)]">Pricing source</span><span className="font-semibold text-[var(--text-primary)]">{pricing.source}</span>
@@ -1013,8 +1018,8 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端优先采用模型厂商官方价格卡，其他模型再回退 models.dev；CodeBuddy/WorkBuddy 等客户端的内部模型后缀（如 `-ioa`）仅做保守查价别名。GPT-5.6 Sol 会按请求日期套用官方有效期价格：2026-08-21 起 Standard 为输入 $4.00、Cache Read $0.40、Cache Write $5.00、输出 $20.00；更早历史请求仍使用当时官方价格。明确标记为 Fast / Priority 的请求按官方 Fast API 价格卡计价，Standard 不会误乘 Fast 倍率；272K 以上输入的请求按官方长上下文规则处理。</p>
-          <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本。GPT-5.6 Sol 固定采用常见中转站未降价兼容价卡：Standard 输入 $5.00、Cache Read $0.50、Cache Write（含 1h 桶）$6.25、输出 $30.00，每项均按 1M Tokens；超过 272K 输入后，整次请求输入侧 2×、输出侧 1.5×。这是一张兼容估算价卡，不代表 OpenAI 当前促销价或订阅实际账单。其他模型仍回退 models.dev，无法完整计价时显示费用下界。</p>
+          <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 GPT-5.6 Sol 官方结构规则 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>
       </div>
@@ -1183,8 +1188,8 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
   const handleSort = (field: keyof UsageRecord) => { if (sortField === field) setSortAsc(!sortAsc); else { setSortField(field); setSortAsc(false); } };
   const csv = (value: unknown) => { const s = String(value ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
   const exportToCSV = () => {
-    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Pricing Status'];
-    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.costLowerBound ? 'Lower bound' : 'Ledger']);
+    const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Billing Channel','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Compatibility Estimate USD','Pricing Status'];
+    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.billingChannel,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.costLowerBound ? 'Lower bound' : 'Ledger']);
     const blob = new Blob([[headers,...rows].map(row => row.map(csv).join(',')).join('\n')], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `usagemesh-export-${Date.now()}.csv`; link.click(); URL.revokeObjectURL(url);
   };
@@ -1343,6 +1348,15 @@ function ymd(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 }
 function startDaysAgo(days: number) { const d = new Date(); d.setDate(d.getDate() - days); return ymd(d); }
+function customTimeBounds(filters: FilterState): { start: number | null; end: number | null } {
+  const start = filters.customStartDate ? new Date(filters.customStartDate).getTime() : Number.NaN;
+  const selectedEnd = filters.customEndDate ? new Date(filters.customEndDate).getTime() : Number.NaN;
+  return {
+    start: Number.isFinite(start) ? start : null,
+    // datetime-local is minute-precision; include the entire selected end minute.
+    end: Number.isFinite(selectedEnd) ? selectedEnd + 60_000 - 1 : null,
+  };
+}
 function inRequestTimeRange(row: RequestRecord, filters: FilterState) {
   const date = row.date.slice(0,10);
   const today = ymd(new Date());
@@ -1351,8 +1365,9 @@ function inRequestTimeRange(row: RequestRecord, filters: FilterState) {
   if (filters.timeRange === '30d') return date >= startDaysAgo(29) && date <= today;
   if (filters.timeRange === 'month') return date.startsWith(today.slice(0,7));
   if (filters.timeRange === 'custom') {
-    if (filters.customStartDate && date < filters.customStartDate) return false;
-    if (filters.customEndDate && date > filters.customEndDate) return false;
+    const { start, end } = customTimeBounds(filters);
+    if (start !== null && row.timestampMs < start) return false;
+    if (end !== null && row.timestampMs > end) return false;
   }
   return true;
 }
@@ -1365,8 +1380,18 @@ function inTimeRange(row: UsageRecord, filters: FilterState) {
   if (filters.timeRange === '30d') return date >= startDaysAgo(29) && date <= today;
   if (filters.timeRange === 'month') return date.startsWith(today.slice(0,7));
   if (filters.timeRange === 'custom') {
-    if (filters.customStartDate && date < filters.customStartDate) return false;
-    if (filters.customEndDate && date > filters.customEndDate) return false;
+    const { start, end } = customTimeBounds(filters);
+    if (row.timestampMs > 0) {
+      if (start !== null && row.timestampMs < start) return false;
+      if (end !== null && row.timestampMs > end) return false;
+      return true;
+    }
+    // Legacy day-only rows remain usable until that device performs the schema
+    // migration and uploads minute buckets.
+    const startDate = filters.customStartDate?.slice(0, 10);
+    const endDate = filters.customEndDate?.slice(0, 10);
+    if (startDate && date < startDate) return false;
+    if (endDate && date > endDate) return false;
   }
   return true;
 }

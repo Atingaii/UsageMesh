@@ -165,7 +165,9 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 ## 费用口径
 
-Dashboard 展示的是**API 等价美元费用估算**，优先采用模型厂商官方价格卡并按生效日期重算历史；通用模型再回退 `models.dev`。例如 GPT-5.6 Sol 在 2026-08-21 起使用 OpenAI 当前官方促销价，旧日期仍保留当时的官方价格。Standard 不会误乘 Fast 倍率，只有本地请求证据明确为 Fast/Priority 时才使用对应官方 Fast API 价格。路由的“官方”标签也只由设备端读取到的 base URL/endpoint 域名本地判定，**原始 URL 不上传 GitHub**，只上传 `official/openrouter/relay/...` 这类归一化标签。具体规则见 [docs/PRICING.md](docs/PRICING.md)。
+Dashboard 展示的是**兼容价卡美元费用估算**，不是供应商账单。GPT-5.6 Sol 固定采用常见中转站未降价价卡：Standard 输入 `$5.00`、缓存读取 `$0.50`、缓存写入（含 1h 桶）`$6.25`、输出 `$30.00`；超过 272K 输入后整次请求输入侧 2×、输出侧 1.5×。通用模型回退 `models.dev`。路由标签由设备端按“请求 endpoint → provider base URL → ChatGPT 本地登录证据 → 原始 provider”顺序判定；因此无自定义 Base URL 的 ChatGPT 登录型 `custom/openai-http` 可归为“官方订阅”，而明确第三方 URL 始终归为中转。**原始 URL、登录令牌和 API Key 均不上传 GitHub**。具体规则见 [docs/PRICING.md](docs/PRICING.md)。
+
+Dashboard 的“自定义”时间范围支持本地日期与时间并精确到分钟。升级后的设备会自动按分钟重建聚合账本，使总量、趋势和请求明细使用同一时间边界；尚未升级的旧账本暂时回退到按日筛选。
 
 ## 友情链接
 

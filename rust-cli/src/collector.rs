@@ -16,11 +16,13 @@ use crate::provider;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct RowKey {
     date: String,
+    timestamp_ms: i64,
     client: String,
     provider: String,
     upstream_vendor: String,
     route_provider: String,
     route_type: String,
+    billing_channel: String,
     model: String,
     tier: Option<String>,
 }
@@ -39,6 +41,10 @@ fn normalized_timestamp_ms(timestamp: i64) -> i64 {
     } else {
         timestamp
     }
+}
+
+fn minute_bucket(timestamp_ms: i64) -> i64 {
+    timestamp_ms.div_euclid(60_000).saturating_mul(60_000)
 }
 
 fn trim_request_details(requests: &mut Vec<RequestDetail>) {
@@ -239,6 +245,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             upstream_vendor: identity.upstream_vendor.clone(),
             route_provider: identity.route_provider.clone(),
             route_type: identity.route_type.clone(),
+            billing_channel: identity.billing_channel.clone(),
             model: model.clone(),
             tier: None,
             reasoning_effort: evidence::reasoning_effort_for_message(
@@ -256,11 +263,13 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             &mut grouped,
             RowKey {
                 date: message.date.clone(),
+                timestamp_ms: minute_bucket(normalized_timestamp_ms(message.timestamp)),
                 client,
                 provider: raw_provider,
                 upstream_vendor: identity.upstream_vendor,
                 route_provider: identity.route_provider,
                 route_type: identity.route_type,
+                billing_channel: identity.billing_channel,
                 model,
                 tier: None,
             },
@@ -301,6 +310,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             upstream_vendor: identity.upstream_vendor.clone(),
             route_provider: identity.route_provider.clone(),
             route_type: identity.route_type.clone(),
+            billing_channel: identity.billing_channel.clone(),
             model: model.clone(),
             tier: Some(enhanced.tier.clone()),
             reasoning_effort: enhanced.reasoning_effort.clone(),
@@ -313,11 +323,13 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             &mut grouped,
             RowKey {
                 date: enhanced.date,
+                timestamp_ms: minute_bucket(enhanced.timestamp_ms),
                 client: "codex".to_string(),
                 provider: raw_provider,
                 upstream_vendor: identity.upstream_vendor,
                 route_provider: identity.route_provider,
                 route_type: identity.route_type,
+                billing_channel: identity.billing_channel,
                 model,
                 tier: Some(enhanced.tier),
             },
@@ -332,11 +344,13 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         totals.add(&value.metrics);
         rows.push(UsageRow {
             date: key.date,
+            timestamp_ms: key.timestamp_ms,
             client: key.client,
             provider: key.provider,
             upstream_vendor: key.upstream_vendor,
             route_provider: key.route_provider,
             route_type: key.route_type,
+            billing_channel: key.billing_channel,
             model: key.model,
             tier: key.tier,
             cost_lower_bound: value.cost_lower_bound,
@@ -346,7 +360,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
 
     trim_request_details(&mut request_details);
     Ok(Ledger {
-        schema_version: 5,
+        schema_version: 7,
         generated_at: chrono::Utc::now().to_rfc3339(),
         device,
         rows,
@@ -439,6 +453,12 @@ mod tests {
         assert!(!parser_provider_is_explicit("kimi", "moonshot"));
         assert!(!parser_provider_is_explicit("gemini", "google"));
         assert!(!parser_provider_is_explicit("opencode", "unknown"));
+    }
+
+    #[test]
+    fn request_rows_are_bucketed_to_the_start_of_the_minute() {
+        assert_eq!(minute_bucket(1_777_777_777_777), 1_777_777_740_000);
+        assert_eq!(minute_bucket(120_000), 120_000);
     }
 
     #[test]

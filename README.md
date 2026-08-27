@@ -164,7 +164,9 @@ No client-side system can promise “absolute security.” UsageMesh instead min
 
 ## Cost semantics
 
-Dashboard cost values are **usage estimates / API-equivalent cost estimates**, not provider invoices and not a promise about a subscription's internal quota accounting. Model-specific rules are kept out of onboarding docs; see [docs/PRICING.md](docs/PRICING.md).
+Dashboard cost values are **compatibility-card USD estimates**, not provider invoices or subscription quota meters. GPT-5.6 Sol is pinned to the widely used undiscounted relay card; see [docs/PRICING.md](docs/PRICING.md) for the exact buckets, long-context rule and local-only route evidence precedence.
+
+The Dashboard's custom time range accepts local date and time down to the minute. Schema-v7 devices rebuild the aggregate ledger into minute buckets so totals, trends and request details use the same boundaries; legacy day-only snapshots fall back to date filtering until that device updates.
 
 ## Development
 

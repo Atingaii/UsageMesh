@@ -96,17 +96,55 @@ fn codex_provider_hints(home: &Path) -> HashMap<String, RouteHint> {
         return HashMap::new();
     };
 
+    // ChatGPT authentication is local billing-channel evidence, not a provider
+    // name guess. Codex's built-in Responses transports may intentionally omit a
+    // base_url; when they require OpenAI auth and no URL override exists, the
+    // authenticated first-party ChatGPT route is the effective endpoint.
+    let chatgpt_auth = std::fs::read(codex_home.join("auth.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|auth| {
+            auth.get("auth_mode")
+                .or_else(|| auth.get("authMode"))
+                .and_then(Value::as_str)
+                .map(|mode| mode.eq_ignore_ascii_case("chatgpt"))
+        })
+        .unwrap_or(false);
+
     table
         .iter()
         .filter_map(|(id, config)| {
-            let base_url = config
+            if let Some(base_url) = config
                 .get("base_url")
                 .and_then(toml::Value::as_str)
-                .or_else(|| config.get("baseUrl").and_then(toml::Value::as_str))?;
-            Some((
-                id.to_ascii_lowercase(),
-                route_hint_from_base_url(id, base_url),
-            ))
+                .or_else(|| config.get("baseUrl").and_then(toml::Value::as_str))
+            {
+                return Some((
+                    id.to_ascii_lowercase(),
+                    route_hint_from_base_url(id, base_url),
+                ));
+            }
+
+            let requires_openai_auth = config
+                .get("requires_openai_auth")
+                .or_else(|| config.get("requiresOpenaiAuth"))
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false);
+            let responses_wire = config
+                .get("wire_api")
+                .or_else(|| config.get("wireApi"))
+                .and_then(toml::Value::as_str)
+                .is_some_and(|wire| wire.eq_ignore_ascii_case("responses"));
+            (chatgpt_auth && requires_openai_auth && responses_wire).then(|| {
+                (
+                    id.to_ascii_lowercase(),
+                    RouteHint {
+                        route_provider: "official".into(),
+                        route_type: "official".into(),
+                        billing_channel: "official-subscription".into(),
+                    },
+                )
+            })
         })
         .collect()
 }
@@ -836,6 +874,40 @@ mod tests {
             .unwrap();
         assert_eq!(evidence.route_hint.as_ref().unwrap().route_type, "official");
         assert_eq!(evidence.explicit_provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn chatgpt_auth_without_base_url_marks_codex_provider_as_official_subscription() {
+        let root = std::env::temp_dir().join(format!(
+            "usagemesh-evidence-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let codex_home = root.join(".codex");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(
+            codex_home.join("config.toml"),
+            r#"[model_providers.openai-http]
+requires_openai_auth = true
+wire_api = "responses"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            codex_home.join("auth.json"),
+            r#"{"auth_mode":"chatgpt","tokens":{"access_token":"not-read"}}"#,
+        )
+        .unwrap();
+
+        let hints = codex_provider_hints(&root);
+        let hint = hints.get("openai-http").unwrap();
+        assert_eq!(hint.route_type, "official");
+        assert_eq!(hint.billing_channel, "official-subscription");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

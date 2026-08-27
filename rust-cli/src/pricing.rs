@@ -21,8 +21,7 @@ use crate::model::{Metrics, PricingInfo};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
 const OPENAI_GPT56_SOL_URL: &str = "https://developers.openai.com/api/docs/models/gpt-5.6-sol";
-pub const PRICING_POLICY: &str = "official-time-aware-api-estimate-v4";
-const GPT56_SOL_PROMO_EFFECTIVE: &str = "2026-08-21";
+pub const PRICING_POLICY: &str = "gpt56-sol-undiscounted-relay-compat-v5";
 const GPT56_TERRA_LUNA_REPRICE_EFFECTIVE: &str = "2026-07-30";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
@@ -282,9 +281,9 @@ impl PriceBook {
     pub fn metadata(&self) -> PricingInfo {
         PricingInfo {
             policy: PRICING_POLICY.to_string(),
-            source: format!("OpenAI official GPT-5.6 cards + models.dev fallback · {}", self.catalog_state),
+            source: format!("GPT-5.6 Sol undiscounted relay compatibility card + models.dev fallback · {}", self.catalog_state),
             source_url: OPENAI_GPT56_SOL_URL.to_string(),
-            compatibility: "GPT-5.6 pricing is effective-date aware; explicit Fast/Priority uses the official API Fast card; unknown models fall back conservatively"
+            compatibility: "GPT-5.6 Sol uses the pinned $5/$0.50/$6.25/$30 compatibility card; >272K applies 2x input-side and 1.5x output; unknown models fall back conservatively"
                 .to_string(),
         }
     }
@@ -359,13 +358,15 @@ impl PriceBook {
     }
 }
 
-/// GPT-5.6 official API price schedule, USD/token.
-/// Sources: OpenAI model docs / pricing announcements. The Aug-21 Sol promotion
-/// and Jul-30 Terra/Luna repricing are applied by request date. Cache writes are
-/// 1.25x uncached input. Explicit Fast/Priority uses the official Fast API card
-/// (2x the short-context Standard card); >272K input then applies 2x input-side
-/// and 1.5x output to the full request.
-fn guarded_pricing(model_id: &str, date: &str, tier: Option<&str>) -> Option<EffectivePricing> {
+/// GPT-5.6 compatibility schedule, USD/token.
+///
+/// Sol is intentionally pinned to the widely used undiscounted relay card
+/// requested by this dashboard: $5 input, $0.50 cached input, $6.25 cache write
+/// (including the one-hour write bucket) and $30 output per million tokens.
+/// OpenAI's documented structural rules still apply: cache writes are 1.25x
+/// uncached input, and >272K input applies 2x input-side plus 1.5x output to the
+/// full request. Terra/Luna retain their date-aware official schedules.
+fn guarded_pricing(model_id: &str, date: &str, _tier: Option<&str>) -> Option<EffectivePricing> {
     let normalized = match model_id {
         "gpt-5.6" | "gpt-5.6-low" | "gpt-5.6-medium" | "gpt-5.6-high" | "gpt-5.6-xhigh"
         | "gpt-5.6-minimal" | "gpt-5.6-max" => "gpt-5.6-sol",
@@ -373,7 +374,6 @@ fn guarded_pricing(model_id: &str, date: &str, tier: Option<&str>) -> Option<Eff
     };
     let observed_date = if date.len() >= 10 { date } else { "9999-12-31" };
     let (input_mtok, cached_mtok, output_mtok) = match normalized {
-        "gpt-5.6-sol" if observed_date >= GPT56_SOL_PROMO_EFFECTIVE => (4.0, 0.4, 20.0),
         "gpt-5.6-sol" => (5.0, 0.5, 30.0),
         "gpt-5.6-terra" if observed_date >= GPT56_TERRA_LUNA_REPRICE_EFFECTIVE => (2.0, 0.2, 12.0),
         "gpt-5.6-terra" => (2.5, 0.25, 15.0),
@@ -381,17 +381,9 @@ fn guarded_pricing(model_id: &str, date: &str, tier: Option<&str>) -> Option<Eff
         "gpt-5.6-luna" => (1.0, 0.1, 6.0),
         _ => return None,
     };
-    let fast = matches!(
-        tier.unwrap_or("standard")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "fast" | "priority"
-    );
-    let speed_multiplier = if fast { 2.0 } else { 1.0 };
-    let input = input_mtok * speed_multiplier / 1_000_000.0;
-    let cache_read = cached_mtok * speed_multiplier / 1_000_000.0;
-    let output = output_mtok * speed_multiplier / 1_000_000.0;
+    let input = input_mtok / 1_000_000.0;
+    let cache_read = cached_mtok / 1_000_000.0;
+    let output = output_mtok / 1_000_000.0;
     let cache_write = input * 1.25;
     Some(EffectivePricing {
         input,
@@ -419,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt56_sol_uses_current_official_promotional_card() {
+    fn gpt56_sol_uses_undiscounted_relay_compatibility_card() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -429,12 +421,12 @@ mod tests {
             Some("standard"),
             &metrics(100_000, 50_000, 10_000, 10_000),
         );
-        assert!((quote.cost_usd - 0.67).abs() < 1e-9);
+        assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
     #[test]
-    fn gpt56_sol_preserves_pre_aug21_historical_price() {
+    fn gpt56_sol_compatibility_card_is_date_independent() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -450,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt56_fast_uses_official_fast_api_card() {
+    fn gpt56_fast_metadata_does_not_change_compatibility_usd_card() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -460,7 +452,7 @@ mod tests {
             Some("fast"),
             &metrics(100_000, 50_000, 10_000, 10_000),
         );
-        assert!((quote.cost_usd - 1.34).abs() < 1e-9);
+        assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
@@ -475,7 +467,7 @@ mod tests {
             Some("standard"),
             &metrics(280_000, 10_000, 0, 10_000),
         );
-        let expected = 280_000.0 * 4e-6 * 2.0 + 10_000.0 * 0.4e-6 * 2.0 + 10_000.0 * 20e-6 * 1.5;
+        let expected = 280_000.0 * 5e-6 * 2.0 + 10_000.0 * 0.5e-6 * 2.0 + 10_000.0 * 30e-6 * 1.5;
         assert!((quote.cost_usd - expected).abs() < 1e-9);
     }
 

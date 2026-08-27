@@ -1,0 +1,10 @@
+UsageMesh 2.4.0 relay-compatible Sol pricing and billing-route release.
+- GPT-5.6 Sol estimates use the pinned undiscounted relay card: $5 input, $0.50 cache read, $6.25 cache write (including 1h) and $30 output per million tokens.
+- Requests above 272K input apply 2x to every input-side bucket and 1.5x to output for the full request.
+- Standard, Fast and Priority remain request metadata and do not multiply the compatibility USD estimate.
+- Locally observed base URLs distinguish official API routes, ChatGPT subscription routes, cloud routes and third-party relays.
+- Codex ChatGPT authentication can identify an official subscription route when the built-in Responses transport has no explicit base URL.
+- Raw endpoints and authentication material remain on-device; only normalized route and billing-channel labels are encrypted and synced.
+- macOS launchd schedules inherit the install shell's proxy variables so GitHub sync and automatic updates keep working behind a local proxy.
+- The schema, pricing policy and scheduler revisions trigger automatic migration, historical repricing and scheduler refresh.
+- Custom dashboard ranges accept local date and time down to the minute; schema v7 stores minute buckets so totals, trends and request details share the same precise boundaries after device migration.

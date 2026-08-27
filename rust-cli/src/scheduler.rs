@@ -5,7 +5,7 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 pub const SYNC_INTERVAL_SECONDS: u32 = 30;
-const SCHEDULER_REVISION: u32 = 3;
+const SCHEDULER_REVISION: u32 = 4;
 
 #[cfg(target_os = "windows")]
 const TASK_NAME: &str = "UsageMeshUsageSync";
@@ -168,6 +168,49 @@ fn xml_escape(value: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+const PROXY_ENV_KEYS: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+
+#[cfg(target_os = "macos")]
+fn proxy_environment() -> Vec<(String, String)> {
+    PROXY_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            std::env::var(key)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| ((*key).to_string(), value))
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn environment_variables_xml(values: &[(String, String)]) -> String {
+    if values.is_empty() {
+        return String::new();
+    }
+    let entries = values
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "<key>{}</key><string>{}</string>",
+                xml_escape(key),
+                xml_escape(value)
+            )
+        })
+        .collect::<String>();
+    format!("<key>EnvironmentVariables</key><dict>{entries}</dict>\n")
+}
+
+#[cfg(target_os = "macos")]
 fn mac_uid() -> Result<String> {
     let output = Command::new("id").arg("-u").output()?;
     if !output.status.success() {
@@ -183,19 +226,22 @@ fn install_macos() -> Result<String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let environment = environment_variables_xml(&proxy_environment());
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>io.atingaii.usagemesh</string>
 <key>ProgramArguments</key><array><string>{}</string><string>sync</string><string>--quiet</string></array>
+{}
 <key>RunAtLoad</key><true/>
 <key>StartInterval</key><integer>30</integer>
 <key>ProcessType</key><string>Background</string>
 <key>LowPriorityIO</key><true/>
 </dict></plist>
 "#,
-        xml_escape(&exe.to_string_lossy())
+        xml_escape(&exe.to_string_lossy()),
+        environment
     );
     fs::write(&path, plist)?;
     let domain = format!("gui/{}", mac_uid()?);
@@ -206,6 +252,26 @@ fn install_macos() -> Result<String> {
     bootstrap.args(["bootstrap", &domain, path.to_string_lossy().as_ref()]);
     run_ok(bootstrap, "macOS launchd registration")?;
     Ok("macOS launchd every 30 seconds".to_string())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::environment_variables_xml;
+
+    #[test]
+    fn launch_agent_proxy_environment_is_escaped() {
+        let values = vec![
+            (
+                "HTTPS_PROXY".to_string(),
+                "http://127.0.0.1:10808".to_string(),
+            ),
+            ("NO_PROXY".to_string(), "localhost&internal".to_string()),
+        ];
+        let xml = environment_variables_xml(&values);
+        assert!(xml.contains("<key>EnvironmentVariables</key><dict>"));
+        assert!(xml.contains("<key>HTTPS_PROXY</key><string>http://127.0.0.1:10808</string>"));
+        assert!(xml.contains("<key>NO_PROXY</key><string>localhost&amp;internal</string>"));
+    }
 }
 
 #[cfg(target_os = "macos")]

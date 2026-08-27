@@ -3,12 +3,14 @@ pub struct ProviderIdentity {
     pub upstream_vendor: String,
     pub route_provider: String,
     pub route_type: String,
+    pub billing_channel: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteHint {
     pub route_provider: String,
     pub route_type: String,
+    pub billing_channel: String,
 }
 
 fn norm(value: &str) -> String {
@@ -90,7 +92,7 @@ fn official_provider_name(raw: &str) -> Option<&'static str> {
     }
 }
 
-fn official_identity(upstream_vendor: String) -> ProviderIdentity {
+fn official_identity(upstream_vendor: String, billing_channel: &str) -> ProviderIdentity {
     // `provider` on UsageRow preserves the source's raw provider identifier for
     // auditing. Once route evidence proves a first-party route, the normalized
     // route-provider dimension intentionally collapses vendor-specific labels to
@@ -101,6 +103,7 @@ fn official_identity(upstream_vendor: String) -> ProviderIdentity {
         upstream_vendor,
         route_provider: "official".into(),
         route_type: "official".into(),
+        billing_channel: billing_channel.into(),
     }
 }
 
@@ -157,36 +160,46 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
         return RouteHint {
             route_provider: "official".into(),
             route_type: "official".into(),
+            billing_channel: if host_is(&host, "chatgpt.com") {
+                "official-subscription".into()
+            } else {
+                "official-api".into()
+            },
         };
     }
     if host.contains("openai.azure.com") || host_is(&host, "azure.com") {
         return RouteHint {
             route_provider: "azure-openai".into(),
             route_type: "cloud".into(),
+            billing_channel: "third-party".into(),
         };
     }
     if host.contains("bedrock") || host_is(&host, "amazonaws.com") {
         return RouteHint {
             route_provider: "aws-bedrock".into(),
             route_type: "cloud".into(),
+            billing_channel: "third-party".into(),
         };
     }
     if host == "aiplatform.googleapis.com" || host.contains("vertex") {
         return RouteHint {
             route_provider: "google-vertex".into(),
             route_type: "cloud".into(),
+            billing_channel: "third-party".into(),
         };
     }
     if host_is(&host, "openrouter.ai") {
         return RouteHint {
             route_provider: "openrouter".into(),
             route_type: "aggregator".into(),
+            billing_channel: "third-party".into(),
         };
     }
     if matches!(host.as_str(), "localhost" | "127.0.0.1" | "0.0.0.0" | "::1") {
         return RouteHint {
             route_provider: "local".into(),
             route_type: "self-hosted".into(),
+            billing_channel: "unknown".into(),
         };
     }
 
@@ -195,6 +208,7 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
         return RouteHint {
             route_provider: classified.route_provider,
             route_type: classified.route_type,
+            billing_channel: classified.billing_channel,
         };
     }
     RouteHint {
@@ -205,6 +219,7 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
             id
         },
         route_type: "relay".into(),
+        billing_channel: "third-party".into(),
     }
 }
 
@@ -220,12 +235,13 @@ pub fn classify(
     let upstream_vendor = infer_upstream_vendor(model);
     if let Some(hint) = hint {
         if hint.route_type == "official" {
-            return official_identity(upstream_vendor);
+            return official_identity(upstream_vendor, &hint.billing_channel);
         }
         return ProviderIdentity {
             upstream_vendor,
             route_provider: hint.route_provider.clone(),
             route_type: hint.route_type.clone(),
+            billing_channel: hint.billing_channel.clone(),
         };
     }
     let raw = raw_provider
@@ -236,6 +252,7 @@ pub fn classify(
             upstream_vendor,
             route_provider: "unknown".into(),
             route_type: "unknown".into(),
+            billing_channel: "unknown".into(),
         };
     };
 
@@ -262,6 +279,7 @@ pub fn classify(
                 upstream_vendor,
                 route_provider: canonical.into(),
                 route_type: "cloud".into(),
+                billing_channel: "third-party".into(),
             };
         }
     }
@@ -270,6 +288,7 @@ pub fn classify(
             upstream_vendor,
             route_provider: "openrouter".into(),
             route_type: "aggregator".into(),
+            billing_channel: "third-party".into(),
         };
     }
     for (needle, canonical) in [
@@ -289,6 +308,7 @@ pub fn classify(
                 upstream_vendor,
                 route_provider: canonical.into(),
                 route_type: "relay".into(),
+                billing_channel: "third-party".into(),
             };
         }
     }
@@ -310,6 +330,7 @@ pub fn classify(
                 upstream_vendor,
                 route_provider: canonical.into(),
                 route_type: "inference-provider".into(),
+                billing_channel: "third-party".into(),
             };
         }
     }
@@ -322,6 +343,7 @@ pub fn classify(
             upstream_vendor,
             route_provider: raw,
             route_type: "self-hosted".into(),
+            billing_channel: "unknown".into(),
         };
     }
     if explicit {
@@ -332,18 +354,21 @@ pub fn classify(
                 upstream_vendor,
                 route_provider: raw,
                 route_type: "unknown".into(),
+                billing_channel: "unknown".into(),
             };
         }
         return ProviderIdentity {
             upstream_vendor,
             route_provider: raw,
             route_type: "custom".into(),
+            billing_channel: "third-party".into(),
         };
     }
     ProviderIdentity {
         upstream_vendor,
         route_provider: raw,
         route_type: "unknown".into(),
+        billing_channel: "unknown".into(),
     }
 }
 
@@ -387,6 +412,19 @@ mod tests {
         let identity = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
         assert_eq!(identity.route_provider, "official");
         assert_eq!(identity.route_type, "official");
+        assert_eq!(identity.billing_channel, "official-api");
+    }
+
+    #[test]
+    fn chatgpt_base_url_maps_to_official_subscription() {
+        let hint = route_hint_from_base_url(
+            "openai-http",
+            "https://chatgpt.com/backend-api/codex/responses",
+        );
+        let identity = classify(Some("openai-http"), "gpt-5.6-sol", true, Some(&hint));
+        assert_eq!(identity.route_provider, "official");
+        assert_eq!(identity.route_type, "official");
+        assert_eq!(identity.billing_channel, "official-subscription");
     }
 
     #[test]
@@ -401,5 +439,6 @@ mod tests {
         let identity = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
         assert_eq!(identity.route_provider, "custom-relay");
         assert_eq!(identity.route_type, "relay");
+        assert_eq!(identity.billing_channel, "third-party");
     }
 }
