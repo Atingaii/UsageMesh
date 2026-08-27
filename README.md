@@ -73,7 +73,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **one-minute cadence** unless you pass `--no-schedule`.
+`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **30-second cadence** unless you pass `--no-schedule`.
 
 A full sync also synchronizes the fork's `main` branch with the current `Atingaii/UsageMesh` upstream before publishing usage data. This is the automatic repair path for users who forked an older version: they do not need to click GitHub's **Sync fork** button manually.
 
@@ -144,7 +144,7 @@ Dashboard assets use relative URLs, so a renamed fork does not depend on a hard-
 
 **Overview** is intentionally concise: total usage, equivalent cost, trend, current devices and recent activity.
 
-**Analysis** is a diagnostic workbench rather than a duplicate overview. It focuses on cache efficiency, average request size/cost, top-contributor concentration, configurable contribution dimensions, a device × model matrix, and high-consumption device/model/client/tier combinations.
+**Analysis** is a diagnostic workbench rather than a duplicate overview. It includes a near-real-time request feed with exact request time, model, speed/tier, reasoning effort when available, token buckets, duration when the source records it, and per-request estimated cost, plus cache efficiency, concentration, contribution dimensions, a device × model matrix, and high-consumption combinations.
 
 ## What is uploaded
 

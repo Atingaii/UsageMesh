@@ -177,7 +177,7 @@ mod tests {
 
     fn ledger() -> Ledger {
         Ledger {
-            schema_version: 4,
+            schema_version: 5,
             generated_at: "2026-08-26T00:00:00Z".into(),
             device: DeviceInfo {
                 id: "mac".into(),
@@ -188,6 +188,7 @@ mod tests {
                 app_version: "1".into(),
             },
             rows: vec![],
+            requests: vec![],
             totals: Metrics {
                 input: 10,
                 output: 3,

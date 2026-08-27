@@ -11,7 +11,10 @@ mod scheduler;
 mod update;
 
 use std::fs;
+use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration as StdDuration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use chrono::{Duration, Local};
@@ -45,9 +48,6 @@ enum CommandKind {
         /// Friendly device name. Defaults to the hostname.
         #[arg(long)]
         device: Option<String>,
-        /// Snapshot cadence in minutes. No process stays resident between runs.
-        #[arg(long, default_value_t = 1)]
-        interval: u32,
         /// Dashboard password. Prefer the hidden prompt or USAGEMESH_DASHBOARD_PASSWORD over CLI history.
         #[arg(long)]
         dashboard_password: Option<String>,
@@ -177,6 +177,46 @@ fn publish_dashboard_access(config: &Config, password: &str) -> Result<String> {
     Ok(branch)
 }
 
+struct SyncLock {
+    path: PathBuf,
+}
+
+impl Drop for SyncLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_sync_lock() -> Result<Option<SyncLock>> {
+    let path = config::config_dir()?.join("sync.lock");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    for attempt in 0..2 {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(Some(SyncLock { path })),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .is_some_and(|age| age > StdDuration::from_secs(15 * 60));
+                if stale && attempt == 0 {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(None)
+}
+
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let config = config::load()?;
 
@@ -193,31 +233,43 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         }
     }
 
-    // v2.0.3 standardizes the live refresh cadence at one minute. Existing
-    // scheduled installs are migrated in place; devices intentionally created
-    // with --no-schedule stay unscheduled.
+    // v2.1 standardizes near-real-time synchronization at 30 seconds. Existing
+    // native schedulers are migrated once. --no-schedule devices remain manual.
     let mut config = config;
-    if config.interval_minutes != 1 {
-        let had_scheduler = scheduler::is_installed();
-        config.interval_minutes = 1;
-        config::save(&config).context("failed to persist the one-minute sync cadence")?;
-        if had_scheduler {
-            match scheduler::install(1) {
-                Ok(description) => {
-                    if !quiet {
-                        println!("Automatic sync cadence migrated: {description}");
-                    }
+    let mut save_config = false;
+    if config.interval_seconds != scheduler::SYNC_INTERVAL_SECONDS {
+        config.interval_seconds = scheduler::SYNC_INTERVAL_SECONDS;
+        save_config = true;
+    }
+    if scheduler::is_installed() && config.scheduler_revision < scheduler::revision() {
+        match scheduler::install(config.interval_seconds) {
+            Ok(description) => {
+                config.scheduler_revision = scheduler::revision();
+                save_config = true;
+                if !quiet {
+                    println!("Automatic sync cadence migrated: {description}");
                 }
-                Err(error) => {
-                    if !quiet {
-                        eprintln!(
-                            "Could not migrate the existing scheduler to one minute: {error:#}"
-                        );
-                    }
+            }
+            Err(error) => {
+                if !quiet {
+                    eprintln!("Could not migrate the existing scheduler to 30 seconds: {error:#}");
                 }
             }
         }
     }
+    if save_config {
+        config::save(&config).context("failed to persist the 30-second sync cadence")?;
+    }
+
+    let _sync_lock = match acquire_sync_lock()? {
+        Some(lock) => lock,
+        None => {
+            if !quiet {
+                println!("Another UsageMesh sync is still running; skipping this tick.");
+            }
+            return Ok(());
+        }
+    };
 
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
@@ -293,8 +345,13 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
     println!("Collecting the first local snapshot...");
     run_sync(true, false)?;
     if !no_schedule {
-        match scheduler::install(config.interval_minutes) {
-            Ok(description) => println!("Automatic sync: {description}"),
+        match scheduler::install(config.interval_seconds) {
+            Ok(description) => {
+                println!("Automatic sync: {description}");
+                let mut persisted = config.clone();
+                persisted.scheduler_revision = scheduler::revision();
+                let _ = config::save(&persisted);
+            }
             Err(error) => {
                 eprintln!("Automatic timer could not be installed: {error}");
                 eprintln!("You can still run `usagemesh sync` manually.");
@@ -317,7 +374,6 @@ fn setup(
     repo: Option<String>,
     token: Option<String>,
     device: Option<String>,
-    interval: u32,
     dashboard_password: Option<String>,
     no_schedule: bool,
 ) -> Result<()> {
@@ -330,7 +386,7 @@ fn setup(
                 .context("could not automatically prepare your UsageMesh fork")?
         }
     };
-    let config = config::new_config(&repo, token, device, interval)?;
+    let config = config::new_config(&repo, token, device)?;
     GithubClient::new(config.repo.clone(), config.github_token.clone())?
         .validate()
         .context("cannot use the selected UsageMesh fork")?;
@@ -384,7 +440,7 @@ fn status() -> Result<()> {
         "Snapshot branch: {}",
         GithubClient::snapshot_branch(&config.device_id)
     );
-    println!("Interval: {} minutes", config.interval_minutes);
+    println!("Sync interval: {} seconds", config.interval_seconds);
     if let Some(ledger) = config::read_cached_ledger()? {
         println!("Last scan: {}", ledger.generated_at);
         println!("Tokens: {}", ledger.totals.total_tokens());
@@ -435,17 +491,9 @@ fn real_main() -> Result<()> {
             repo,
             token,
             device,
-            interval,
             dashboard_password,
             no_schedule,
-        } => setup(
-            repo,
-            token,
-            device,
-            interval,
-            dashboard_password,
-            no_schedule,
-        ),
+        } => setup(repo, token, device, dashboard_password, no_schedule),
         CommandKind::Join {
             code,
             token,

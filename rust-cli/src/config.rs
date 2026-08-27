@@ -19,7 +19,10 @@ pub struct Config {
     pub dashboard_key: String,
     pub device_id: String,
     pub device_name: String,
-    pub interval_minutes: u32,
+    #[serde(default = "default_interval_seconds")]
+    pub interval_seconds: u32,
+    #[serde(default)]
+    pub scheduler_revision: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +31,10 @@ struct JoinCode {
     version: u32,
     repo: String,
     dashboard_key: String,
-    interval_minutes: u32,
+    #[serde(default)]
+    interval_seconds: Option<u32>,
+    #[serde(default)]
+    interval_minutes: Option<u32>,
 }
 
 pub fn config_dir() -> Result<PathBuf> {
@@ -41,6 +47,14 @@ pub fn config_path() -> Result<PathBuf> {
 }
 pub fn ledger_cache_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("ledger-cache.json"))
+}
+
+const fn default_interval_seconds() -> u32 {
+    30
+}
+
+fn normalize_interval_seconds(_: u32) -> u32 {
+    30
 }
 
 pub fn normalize_repo(value: &str) -> Result<String> {
@@ -90,12 +104,7 @@ fn unique_device_id(name: &str) -> String {
     format!("{}-{}", sanitize_device_id(name), hex::encode(bytes))
 }
 
-pub fn new_config(
-    repo: &str,
-    token: String,
-    device_name: Option<String>,
-    interval_minutes: u32,
-) -> Result<Config> {
+pub fn new_config(repo: &str, token: String, device_name: Option<String>) -> Result<Config> {
     let name = device_name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(default_device_name);
@@ -106,7 +115,8 @@ pub fn new_config(
         dashboard_key: generate_key(),
         device_id: unique_device_id(&name),
         device_name: name,
-        interval_minutes: interval_minutes.clamp(1, 1440),
+        interval_seconds: default_interval_seconds(),
+        scheduler_revision: 0,
     })
 }
 
@@ -129,7 +139,15 @@ pub fn from_join(code: &str, token: String, device_name: Option<String>) -> Resu
         dashboard_key: join.dashboard_key,
         device_id: unique_device_id(&name),
         device_name: name,
-        interval_minutes: join.interval_minutes.clamp(1, 1440),
+        interval_seconds: normalize_interval_seconds(
+            join.interval_seconds
+                .or_else(|| {
+                    join.interval_minutes
+                        .map(|minutes| minutes.saturating_mul(60))
+                })
+                .unwrap_or(default_interval_seconds()),
+        ),
+        scheduler_revision: 0,
     })
 }
 
@@ -138,7 +156,8 @@ pub fn join_code(config: &Config) -> Result<String> {
         version: 2,
         repo: config.repo.clone(),
         dashboard_key: config.dashboard_key.clone(),
-        interval_minutes: config.interval_minutes,
+        interval_seconds: Some(config.interval_seconds),
+        interval_minutes: None,
     })?))
 }
 
@@ -239,7 +258,7 @@ mod tests {
 
     #[test]
     fn join_code_roundtrip_shape() {
-        let config = new_config("owner/repo", "t".into(), Some("My PC".into()), 15).unwrap();
+        let config = new_config("owner/repo", "t".into(), Some("My PC".into())).unwrap();
         let code = join_code(&config).unwrap();
         let other = from_join(&code, "x".into(), Some("Other".into())).unwrap();
         assert_eq!(other.repo, "owner/repo");
@@ -249,7 +268,7 @@ mod tests {
 
     #[test]
     fn dashboard_url_never_exposes_workspace_key() {
-        let config = new_config("owner/repo", "t".into(), Some("x".into()), 15).unwrap();
+        let config = new_config("owner/repo", "t".into(), Some("x".into())).unwrap();
         let url = dashboard_url(&config);
         assert_eq!(url, "https://owner.github.io/repo/");
         assert!(!url.contains(&config.dashboard_key));
@@ -258,7 +277,7 @@ mod tests {
 
     #[test]
     fn primary_workspace_uses_short_dashboard_url() {
-        let config = new_config("Atingaii/UsageMesh", "t".into(), Some("x".into()), 15).unwrap();
+        let config = new_config("Atingaii/UsageMesh", "t".into(), Some("x".into())).unwrap();
         assert_eq!(
             dashboard_url(&config),
             "https://atingaii.github.io/UsageMesh/"
@@ -267,8 +286,8 @@ mod tests {
 
     #[test]
     fn same_name_devices_do_not_collide() {
-        let first = new_config("owner/repo", "t".into(), Some("server".into()), 15).unwrap();
-        let second = new_config("owner/repo", "t".into(), Some("server".into()), 15).unwrap();
+        let first = new_config("owner/repo", "t".into(), Some("server".into())).unwrap();
+        let second = new_config("owner/repo", "t".into(), Some("server".into())).unwrap();
         assert_ne!(first.device_id, second.device_id);
         assert!(first.device_id.starts_with("server-"));
     }

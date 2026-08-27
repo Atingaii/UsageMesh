@@ -9,7 +9,7 @@ use tokscale_core::{
 
 use crate::codex_tier;
 use crate::evidence::{self, EvidenceBundle};
-use crate::model::{DeviceInfo, Ledger, Metrics, PricingInfo, UsageRow};
+use crate::model::{DeviceInfo, Ledger, Metrics, PricingInfo, RequestDetail, UsageRow};
 use crate::pricing::PriceBook;
 use crate::provider;
 
@@ -29,6 +29,35 @@ struct RowKey {
 struct RowAccumulator {
     metrics: Metrics,
     cost_lower_bound: bool,
+}
+
+const MAX_REQUEST_DETAILS: usize = 1000;
+
+fn normalized_timestamp_ms(timestamp: i64) -> i64 {
+    if timestamp.abs() < 100_000_000_000 {
+        timestamp.saturating_mul(1000)
+    } else {
+        timestamp
+    }
+}
+
+fn trim_request_details(requests: &mut Vec<RequestDetail>) {
+    requests.sort_by(|a, b| {
+        a.timestamp_ms
+            .cmp(&b.timestamp_ms)
+            .then_with(|| a.client.cmp(&b.client))
+            .then_with(|| a.model.cmp(&b.model))
+    });
+    requests.dedup_by(|a, b| {
+        a.timestamp_ms == b.timestamp_ms
+            && a.client == b.client
+            && a.model == b.model
+            && a.tier == b.tier
+            && a.metrics == b.metrics
+    });
+    if requests.len() > MAX_REQUEST_DETAILS {
+        requests.drain(0..requests.len() - MAX_REQUEST_DETAILS);
+    }
 }
 
 fn normalize_text(value: &str, fallback: &str) -> String {
@@ -192,6 +221,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
     let accepted_codex_days = reconciled_codex_days(&canonical_codex, &codex_enhancement);
 
     let mut grouped: BTreeMap<RowKey, RowAccumulator> = BTreeMap::new();
+    let mut request_details: Vec<RequestDetail> = Vec::new();
 
     for message in &parsed.messages {
         if message.client == "codex" && accepted_codex_days.contains(&message.date) {
@@ -201,6 +231,21 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         let model = canonical_model_id(&message.model_id);
         let (raw_provider, identity) = route_for_message(&route_evidence, message, &client, &model);
         let (metrics, cost_lower_bound) = priced_metrics_from_message(message, &model, &price_book);
+        request_details.push(RequestDetail {
+            timestamp_ms: normalized_timestamp_ms(message.timestamp),
+            client: client.clone(),
+            provider: raw_provider.clone(),
+            upstream_vendor: identity.upstream_vendor.clone(),
+            route_provider: identity.route_provider.clone(),
+            route_type: identity.route_type.clone(),
+            model: model.clone(),
+            tier: None,
+            reasoning_effort: None,
+            agent: message.agent.clone(),
+            duration_ms: message.duration_ms.filter(|value| *value >= 0),
+            cost_lower_bound,
+            metrics: metrics.clone(),
+        });
         add_grouped(
             &mut grouped,
             RowKey {
@@ -242,6 +287,22 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         // creation at 1.25x input, so the result is explicitly marked as a lower
         // bound rather than pretending to be exact.
         let missing_cache_write_evidence = !enhanced.cache_write_known && metrics.input > 0;
+        let cost_lower_bound = quote.lower_bound || missing_cache_write_evidence;
+        request_details.push(RequestDetail {
+            timestamp_ms: enhanced.timestamp_ms,
+            client: "codex".to_string(),
+            provider: raw_provider.clone(),
+            upstream_vendor: identity.upstream_vendor.clone(),
+            route_provider: identity.route_provider.clone(),
+            route_type: identity.route_type.clone(),
+            model: model.clone(),
+            tier: Some(enhanced.tier.clone()),
+            reasoning_effort: enhanced.reasoning_effort.clone(),
+            agent: None,
+            duration_ms: None,
+            cost_lower_bound,
+            metrics: metrics.clone(),
+        });
         add_grouped(
             &mut grouped,
             RowKey {
@@ -255,7 +316,7 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
                 tier: Some(enhanced.tier),
             },
             metrics,
-            quote.lower_bound || missing_cache_write_evidence,
+            cost_lower_bound,
         );
     }
 
@@ -277,11 +338,13 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
         });
     }
 
+    trim_request_details(&mut request_details);
     Ok(Ledger {
-        schema_version: 4,
+        schema_version: 5,
         generated_at: chrono::Utc::now().to_rfc3339(),
         device,
         rows,
+        requests: request_details,
         totals,
         scan_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
         pricing: price_book.metadata(),
@@ -291,6 +354,10 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
 pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> Ledger {
     previous.rows.retain(|row| row.date.as_str() < since);
     previous.rows.extend(partial.rows);
+    if let Some(cutoff) = partial.requests.iter().map(|row| row.timestamp_ms).min() {
+        previous.requests.retain(|row| row.timestamp_ms < cutoff);
+    }
+    previous.requests.extend(partial.requests);
     previous.rows.sort_by(|left, right| {
         left.date
             .cmp(&right.date)
@@ -308,6 +375,7 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
     for row in &previous.rows {
         previous.totals.add(&row.metrics);
     }
+    trim_request_details(&mut previous.requests);
     previous
 }
 
@@ -315,6 +383,7 @@ pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
     left.schema_version == right.schema_version
         && left.device.id == right.device.id
         && left.rows == right.rows
+        && left.requests == right.requests
         && left.totals == right.totals
         && left.pricing == right.pricing
 }
@@ -336,6 +405,7 @@ mod tests {
                 app_version: "1.1.0".to_string(),
             },
             rows: Vec::new(),
+            requests: Vec::new(),
             totals: Metrics::default(),
             scan_ms: 1,
             pricing: PricingInfo::default(),

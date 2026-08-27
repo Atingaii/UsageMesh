@@ -31,6 +31,35 @@ interface UsageRecord {
   updatedAt: string;
 }
 
+interface RequestRecord {
+  id: string;
+  timestampMs: number;
+  date: string;
+  device: string;
+  deviceId: string;
+  platform: string;
+  architecture: string;
+  tool: string;
+  model: string;
+  vendor: string;
+  routeProvider: string;
+  routeType: string;
+  rawProvider: string;
+  tier: string;
+  reasoningEffort: string;
+  agent: string;
+  durationMs: number | null;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  requestCount: number;
+  cost: number;
+  costLowerBound: boolean;
+}
+
 interface DeviceInfo {
   id: string;
   name: string;
@@ -94,6 +123,7 @@ interface PricingStatus {
 interface DashboardDataset {
   repo: string;
   records: UsageRecord[];
+  requests: RequestRecord[];
   pricing: PricingStatus;
   lastSync: string;
 }
@@ -281,8 +311,11 @@ function writeCache(map: CostMap, fetchedAt: number) {
 async function fetchMap(): Promise<{ map: CostMap | null; fetchedAt: number | null; source: string }> {
   const cached = readCache();
   const now = Date.now();
+  if (cached && now - cached.fetchedAt < 6 * 60 * 60 * 1000) {
+    return { map: cached.map, fetchedAt: cached.fetchedAt, source: 'LiteLLM cache' };
+  }
   try {
-    // Revalidate on every unlock/refresh so newly-added LiteLLM models become
+    // Revalidate periodically so newly-added LiteLLM models become
     // available without a UsageMesh release. Browser HTTP caching can still
     // satisfy an unchanged map cheaply, while localStorage is only a failure fallback.
     const response = await fetch(LITELLM_COST_MAP_URL, { cache: 'no-cache' });
@@ -400,6 +433,28 @@ interface LedgerRow {
   costUsd?: number;
 }
 
+interface LedgerRequest {
+  timestampMs?: number;
+  client?: string;
+  provider?: string;
+  upstreamVendor?: string;
+  routeProvider?: string;
+  routeType?: string;
+  model?: string;
+  tier?: string | null;
+  reasoningEffort?: string | null;
+  agent?: string | null;
+  durationMs?: number | null;
+  costLowerBound?: boolean;
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+  messages?: number;
+  costUsd?: number;
+}
+
 interface Ledger {
   schemaVersion?: number;
   generatedAt?: string;
@@ -412,6 +467,7 @@ interface Ledger {
     appVersion?: string;
   };
   rows?: LedgerRow[];
+  requests?: LedgerRequest[];
 }
 
 function repoFromLocation(): string {
@@ -585,6 +641,46 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
   };
 }
 
+function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): RequestRecord {
+  const deviceId = String(ledger.device?.id || ledger.device?.name || 'unknown-device');
+  const deviceName = String(ledger.device?.name || ledger.device?.id || 'Unknown Device');
+  const platform = String(ledger.device?.platform || 'unknown');
+  const arch = String(ledger.device?.arch || '');
+  const timestampMs = Number(row.timestampMs || 0);
+  const input = Number(row.input || 0), output = Number(row.output || 0);
+  const cacheRead = Number(row.cacheRead || 0), cacheWrite = Number(row.cacheWrite || 0);
+  const reasoning = Number(row.reasoning || 0);
+  const route = routeLabel(row as LedgerRow);
+  return {
+    id: `${deviceId}:${timestampMs}:${row.client || ''}:${row.model || ''}:${index}`,
+    timestampMs,
+    date: timestampMs > 0 ? new Date(timestampMs).toISOString().slice(0, 10) : '',
+    device: deviceName,
+    deviceId,
+    platform: platformLabel(platform),
+    architecture: archLabel(platform, arch),
+    tool: String(row.client || 'Unknown'),
+    model: String(row.model || 'Unknown'),
+    vendor: String(row.upstreamVendor || 'Unknown'),
+    routeProvider: route,
+    routeType: String(row.routeType || 'unknown'),
+    rawProvider: String(row.provider || 'unknown'),
+    tier: tierLabel(row.tier),
+    reasoningEffort: String(row.reasoningEffort || ''),
+    agent: String(row.agent || ''),
+    durationMs: row.durationMs == null ? null : Number(row.durationMs),
+    inputTokens: input,
+    cacheReadTokens: cacheRead,
+    cacheWriteTokens: cacheWrite,
+    outputTokens: output,
+    reasoningTokens: reasoning,
+    totalTokens: input + cacheRead + cacheWrite + output + reasoning,
+    requestCount: Math.max(1, Number(row.messages || 1)),
+    cost: Number(row.costUsd || 0),
+    costLowerBound: Boolean(row.costLowerBound),
+  };
+}
+
 async function loadDashboardWithKey(repo: string, key: string): Promise<DashboardDataset> {
   const branches = await loadDeviceIndex(repo);
   const settled = await Promise.allSettled(branches.map(branch => decryptLedger(repo, branch, key)));
@@ -595,9 +691,13 @@ async function loadDashboardWithKey(repo: string, key: string): Promise<Dashboar
   }
 
   const records = ledgers.flatMap(ledger => (ledger.rows || []).map((row, index) => toRecord(ledger, row, index)));
+  const requests = ledgers
+    .flatMap(ledger => (ledger.requests || []).map((row, index) => toRequestRecord(ledger, row, index)))
+    .sort((a, b) => b.timestampMs - a.timestampMs)
+    .slice(0, 5000);
   const pricing = await applyDynamicPricing(records);
   const lastSync = ledgers.map(ledger => String(ledger.generatedAt || '')).filter(Boolean).sort().at(-1) || '';
-  return { repo, records, pricing, lastSync };
+  return { repo, records, requests, pricing, lastSync };
 }
 
 async function unlockDashboard(password: string): Promise<{ dataset: DashboardDataset; key: string }> {
@@ -1052,7 +1152,7 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
   </div>;
 };
 
-interface Props { isDarkMode: boolean; records: UsageRecord[]; }
+interface Props { isDarkMode: boolean; records: UsageRecord[]; requests: RequestRecord[]; }
 type Metric = 'totalTokens' | 'cost' | 'inputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'outputTokens' | 'reasoningTokens' | 'requestsCount';
 type Group = 'date' | 'device' | 'tool' | 'model' | 'vendor' | 'routeProvider' | 'routeType' | 'rawProvider' | 'tier';
 type ChartType = 'bar' | 'line' | 'pie' | 'table';
@@ -1062,7 +1162,7 @@ const groupLabels: Record<Group,string> = { date:'时间',device:'设备',tool:'
 const analysisColors = ['#2563eb','#10b981','#8b5cf6','#f59e0b','#06b6d4','#ec4899','#6366f1','#14b8a6'];
 const analysisCompact = (n:number) => n >= 1e9 ? `${(n/1e9).toFixed(1)}B` : n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1e3 ? `${(n/1e3).toFixed(0)}K` : Math.round(n).toString();
 
-const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records }) => {
+const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records, requests }) => {
   type Dimension = 'model' | 'device' | 'tool' | 'tier' | 'routeProvider';
   type Metric = 'totalTokens' | 'cost' | 'requestsCount';
   const [dimension, setDimension] = useState<Dimension>('model');
@@ -1139,11 +1239,30 @@ const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records }) => {
     ['输出 / 输入侧',`${summary.outputInputRatio.toFixed(1)}%`,`新增输入占比 ${summary.freshInputShare.toFixed(1)}%`],
     ['等价费用 / 1M Tokens',`$${summary.equivalentCostPerMillion.toFixed(2)}`,'用于结构效率比较，不代表账单'],
   ];
+  const [requestSearch, setRequestSearch] = useState('');
+  const liveRequests = useMemo(() => {
+    const q = requestSearch.trim().toLowerCase();
+    return requests
+      .filter(r => !q || [r.device,r.tool,r.model,r.routeProvider,r.tier,r.reasoningEffort,r.agent].some(v => String(v).toLowerCase().includes(q)))
+      .sort((a,b) => b.timestampMs - a.timestampMs)
+      .slice(0, 300);
+  }, [requests, requestSearch]);
+  const requestTime = (ms:number) => ms > 0 ? new Date(ms).toLocaleString('zh-CN', { hour12:false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—';
+  const durationText = (ms:number|null) => ms == null || ms < 0 ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms/1000).toFixed(ms < 10000 ? 2 : 1)} s`;
 
   return <div className="space-y-4 transition-colors">
     <section className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] p-4 shadow-2xs">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-[var(--accent-blue)]" /><h2 className="text-base font-semibold text-[var(--text-primary)]">分析工作台</h2></div><p className="mt-1 text-xs text-[var(--text-muted)]">概览回答“用了多少”，这里用于定位“为什么高、由谁贡献、结构是否健康”。</p></div><div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2 text-right"><div className="text-[10px] text-[var(--text-muted)]">TOP 3 集中度</div><div className="font-mono text-sm font-bold text-[var(--text-primary)]">{topShare.toFixed(1)}%</div></div></div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{stats.map(([label,value,note])=><div key={label} className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)]/50 p-3.5"><div className="text-[11px] font-medium text-[var(--text-muted)]">{label}</div><div className="mt-1 font-mono-numbers text-xl font-bold text-[var(--text-primary)]">{value}</div><div className="mt-1 text-[10px] text-[var(--text-muted)]">{note}</div></div>)}</div>
+    </section>
+
+    <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3.5">
+        <div><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-emerald-500"/><h3 className="text-sm font-semibold text-[var(--text-primary)]">实时请求明细</h3><span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"/>LIVE</span></div><p className="mt-0.5 text-xs text-[var(--text-muted)]">设备约每 30 秒采集并上传；页面每 10 秒检查新快照。仅展示用量元数据，不上传 Prompt、回复或源代码。</p></div>
+        <div className="relative"><input value={requestSearch} onChange={e=>setRequestSearch(e.target.value)} placeholder="搜索设备、模型、速率、思考强度..." className="w-64 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] py-1.5 pl-8 pr-3 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)]"/><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--text-muted)]"/></div>
+      </div>
+      <div className="max-h-[620px] overflow-auto"><table className="w-full min-w-[1500px] whitespace-nowrap text-left text-xs"><thead className="sticky top-0 z-10 border-b border-[var(--border-color)] bg-[var(--bg-main)] text-[10px] font-mono text-[var(--text-muted)]"><tr><th className="p-3">具体时间</th><th className="p-3">设备</th><th className="p-3">客户端</th><th className="p-3">模型</th><th className="p-3">路由</th><th className="p-3">速率</th><th className="p-3">思考强度</th><th className="p-3 text-right">输入</th><th className="p-3 text-right">Cache Read</th><th className="p-3 text-right">Cache Write</th><th className="p-3 text-right">输出</th><th className="p-3 text-right">Reasoning</th><th className="p-3 text-right">总 Tokens</th><th className="p-3 text-right">耗时</th><th className="p-3 text-right">费用</th></tr></thead><tbody className="divide-y divide-[var(--border-subtle)] font-mono">{liveRequests.map(r=><tr key={r.id} className="hover:bg-[var(--bg-card-hover)]"><td className="p-3 text-[var(--text-secondary)]">{requestTime(r.timestampMs)}</td><td className="p-3 font-medium text-[var(--text-primary)]">{r.device}</td><td className="p-3 text-[var(--text-primary)]">{r.tool}</td><td className="p-3 font-semibold text-[var(--accent-blue)]">{r.model}</td><td className="p-3 text-[var(--text-secondary)]">{r.routeProvider}</td><td className="p-3"><span className={`rounded px-1.5 py-0.5 text-[10px] ${/fast|priority/i.test(r.tier)?'bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold':'bg-[var(--bg-main)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>{r.tier}</span></td><td className="p-3"><span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-600 dark:text-purple-400">{r.reasoningEffort || '—'}</span></td><td className="p-3 text-right">{r.inputTokens.toLocaleString()}</td><td className="p-3 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="p-3 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="p-3 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="p-3 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="p-3 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="p-3 text-right text-[var(--text-secondary)]">{durationText(r.durationMs)}</td><td className="p-3 text-right font-bold text-emerald-600">{r.costLowerBound?'≥':''}${r.cost.toFixed(4)}</td></tr>)}{!liveRequests.length&&<tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">暂无请求级明细。升级设备端到支持请求明细的版本后，新快照会自动出现。</td></tr>}</tbody></table></div>
+      <div className="border-t border-[var(--border-color)] bg-[var(--bg-main)] px-4 py-2.5 text-[10px] text-[var(--text-muted)]">显示最近 {liveRequests.length} 条匹配记录；每台设备账本滚动保留最近 1000 条请求级用量记录。</div>
     </section>
 
     <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
@@ -1167,6 +1286,20 @@ function ymd(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 }
 function startDaysAgo(days: number) { const d = new Date(); d.setDate(d.getDate() - days); return ymd(d); }
+function inRequestTimeRange(row: RequestRecord, filters: FilterState) {
+  const date = row.date.slice(0,10);
+  const today = ymd(new Date());
+  if (filters.timeRange === 'today') return date === today;
+  if (filters.timeRange === '7d') return date >= startDaysAgo(6) && date <= today;
+  if (filters.timeRange === '30d') return date >= startDaysAgo(29) && date <= today;
+  if (filters.timeRange === 'month') return date.startsWith(today.slice(0,7));
+  if (filters.timeRange === 'custom') {
+    if (filters.customStartDate && date < filters.customStartDate) return false;
+    if (filters.customEndDate && date > filters.customEndDate) return false;
+  }
+  return true;
+}
+
 function inTimeRange(row: UsageRecord, filters: FilterState) {
   const date = row.date.slice(0,10);
   const today = ymd(new Date());
@@ -1221,6 +1354,23 @@ function App() {
 
   useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); localStorage.setItem('usagemesh:theme', isDarkMode ? 'dark' : 'light'); }, [isDarkMode]);
   useEffect(() => { localStorage.setItem('usagemesh:sidebar', isSidebarCollapsed ? 'collapsed' : 'expanded'); }, [isSidebarCollapsed]);
+  useEffect(() => {
+    if (!workspaceKeyValue) return;
+    let cancelled = false;
+    let busy = false;
+    const timer = window.setInterval(async () => {
+      if (cancelled || busy || document.visibilityState === 'hidden') return;
+      busy = true;
+      try {
+        const next = await loadDashboardWithKey(repoFromLocation(), workspaceKeyValue);
+        if (!cancelled) { setDataset(next); setSyncStatus('synced'); }
+      } catch {
+        // Keep the last good snapshot; transient raw.githubusercontent failures
+        // should not blank a live dashboard.
+      } finally { busy = false; }
+    }, 10_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [workspaceKeyValue]);
   useEffect(() => {
     let cancelled = false;
     const repo = repoFromLocation();
@@ -1291,6 +1441,19 @@ function App() {
       && (filters.tier==='all' || row.tier===filters.tier));
   }, [dataset,filters]);
 
+  const filteredRequests = useMemo(() => {
+    const rows = dataset?.requests || [];
+    return rows.filter(row => inRequestTimeRange(row, filters)
+      && (filters.device==='all' || row.device===filters.device)
+      && (filters.tool==='all' || row.tool===filters.tool)
+      && (filters.model==='all' || row.model===filters.model)
+      && (filters.vendor==='all' || row.vendor===filters.vendor)
+      && (filters.routeProvider==='all' || row.routeProvider===filters.routeProvider)
+      && (filters.routeType==='all' || row.routeType===filters.routeType)
+      && (filters.rawProvider==='all' || row.rawProvider===filters.rawProvider)
+      && (filters.tier==='all' || row.tier===filters.tier));
+  }, [dataset, filters]);
+
   const deviceRows = useMemo(() => devices(filtered), [filtered]);
   const trendRows = useMemo(() => trend(filtered), [filtered]);
   const allDevices = dataset ? new Set(dataset.records.map(r => r.deviceId)).size : 0;
@@ -1311,7 +1474,7 @@ function App() {
       <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与订阅等价费用" repoBadge="" pricingBadge="" lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
       <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1920px] w-full mx-auto">
         {activeTab==='overview' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><TrendChart isDarkMode={isDarkMode} data={trendRows} /><BreakdownCards records={filtered} /></>}
-        {activeTab==='analytics' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><UsageAnalysisView isDarkMode={isDarkMode} records={filtered} /></>}
+        {activeTab==='analytics' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><UsageAnalysisView isDarkMode={isDarkMode} records={filtered} requests={filteredRequests} /></>}
         {activeTab==='devices' && <DevicesView devices={deviceRows} />}
         {activeTab==='aggregated' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><AggregatedDataView records={filtered} /></>}
       </main>

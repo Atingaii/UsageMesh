@@ -66,9 +66,11 @@ impl RawUsage {
 #[derive(Debug, Clone)]
 pub struct EnhancedCodexRow {
     pub date: String,
+    pub timestamp_ms: i64,
     pub model: String,
     pub provider: String,
     pub tier: String,
+    pub reasoning_effort: Option<String>,
     pub metrics: Metrics,
     pub cache_write_known: bool,
 }
@@ -171,6 +173,24 @@ fn extract_service_tier(payload: &Value) -> Option<String> {
     })
 }
 
+fn extract_reasoning_effort(payload: &Value) -> Option<String> {
+    let candidates = [
+        payload.get("effort"),
+        payload.get("reasoning_effort"),
+        payload.get("reasoningEffort"),
+        payload.pointer("/reasoning/effort"),
+        payload.pointer("/reasoning/config/effort"),
+        payload.pointer("/thread_settings/reasoning_effort"),
+        payload.pointer("/thread_settings/reasoningEffort"),
+    ];
+    candidates.into_iter().flatten().find_map(|value| {
+        value
+            .as_str()
+            .map(|text| text.trim().to_ascii_lowercase())
+            .filter(|text| !text.is_empty())
+    })
+}
+
 fn timestamp_ms(value: Option<&Value>) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(value?.as_str()?)
         .ok()
@@ -202,9 +222,11 @@ fn short_file_id(path: &Path) -> String {
 struct RequestRecord {
     dedupe: String,
     date: String,
+    timestamp_ms: i64,
     model: String,
     provider: String,
     tier: String,
+    reasoning_effort: Option<String>,
     usage: RawUsage,
 }
 
@@ -220,6 +242,7 @@ fn parse_session_file(path: &Path, bucket_timezone: &BucketTimezone) -> Vec<Requ
     let mut provider = String::new();
     let mut current_model = String::new();
     let mut current_tier = "standard".to_string();
+    let mut current_reasoning_effort: Option<String> = None;
     let mut records = Vec::new();
 
     for line in BufReader::new(file).lines().map_while(Result::ok) {
@@ -232,6 +255,9 @@ fn parse_session_file(path: &Path, bucket_timezone: &BucketTimezone) -> Vec<Requ
         let payload = row.get("payload").unwrap_or(&Value::Null);
         if let Some(tier) = extract_service_tier(payload) {
             current_tier = tier;
+        }
+        if let Some(effort) = extract_reasoning_effort(payload) {
+            current_reasoning_effort = Some(effort);
         }
 
         match string_at(&row, "type").unwrap_or_default() {
@@ -262,9 +288,11 @@ fn parse_session_file(path: &Path, bucket_timezone: &BucketTimezone) -> Vec<Requ
                 records.push(RequestRecord {
                     dedupe: usage_dedupe_key(&session_id, &usage, &total),
                     date: bucket_timezone.day_key(milliseconds),
+                    timestamp_ms: milliseconds,
                     model: current_model.clone(),
                     provider: provider.clone(),
                     tier: current_tier.clone(),
+                    reasoning_effort: current_reasoning_effort.clone(),
                     usage,
                 });
             }
@@ -342,9 +370,11 @@ pub fn collect(
                 day.messages = day.messages.saturating_add(metrics.messages);
                 rows.push(EnhancedCodexRow {
                     date: request.date,
+                    timestamp_ms: request.timestamp_ms,
                     model: request.model,
                     provider: request.provider,
                     tier: request.tier,
+                    reasoning_effort: request.reasoning_effort,
                     metrics,
                     cache_write_known: request.usage.cache_write.is_some(),
                 });

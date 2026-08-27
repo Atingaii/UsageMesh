@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 4;
+pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 5;
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -90,11 +90,38 @@ pub struct PricingInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct RequestDetail {
+    /// Exact source event time normalized to Unix milliseconds.
+    pub timestamp_ms: i64,
+    pub client: String,
+    pub provider: String,
+    pub upstream_vendor: String,
+    pub route_provider: String,
+    pub route_type: String,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cost_lower_bound: bool,
+    #[serde(flatten)]
+    pub metrics: Metrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Ledger {
     pub schema_version: u32,
     pub generated_at: String,
     pub device: DeviceInfo,
     pub rows: Vec<UsageRow>,
+    #[serde(default)]
+    pub requests: Vec<RequestDetail>,
     pub totals: Metrics,
     pub scan_ms: u64,
     #[serde(default)]
