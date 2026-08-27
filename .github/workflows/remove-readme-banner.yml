@@ -1,0 +1,43 @@
+name: Remove README banner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/remove-readme-banner.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.repository == 'Atingaii/UsageMesh'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove dashboard banner from READMEs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          zh = Path('README.zh-CN.md')
+          text = zh.read_text()
+          block = "> **主 Dashboard：** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh **不预置 Dashboard 密码**。工作区所有者在首次执行 `usagemesh setup` 时于本机自行创建密码。\n\n"
+          if block not in text:
+              raise SystemExit('Chinese dashboard banner not found')
+          zh.write_text(text.replace(block, '', 1))
+
+          en = Path('README.md')
+          text = en.read_text()
+          block = "> **Primary dashboard:** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh ships with **no default dashboard password**. The workspace owner creates the password locally during `usagemesh setup`.\n\n"
+          if block not in text:
+              raise SystemExit('English dashboard banner not found')
+          en.write_text(text.replace(block, '', 1))
+          PY
+
+          git config user.name 'UsageMesh Maintenance'
+          git config user.email 'actions@users.noreply.github.com'
+          git add README.md README.zh-CN.md
+          git commit -m 'docs: remove primary dashboard banner'
+          git push origin HEAD:main
