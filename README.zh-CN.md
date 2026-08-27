@@ -85,19 +85,21 @@ usagemesh dashboard
 
 地址由实际 Fork 自动决定。例如账号为 `alice`、Fork 名仍为 `UsageMesh` 时，地址为 `https://alice.github.io/UsageMesh/`。如果 Fork 改名，使用 `usagemesh setup --repo OWNER/RENAMED_REPO` 初始化后，Dashboard 地址也会根据真实仓库名自动生成。
 
-### Dashboard 如何保持最新
+## 无感自动更新
+
+从 **UsageMesh v2.0.2** 开始，正常同步本身就是升级机制。每一次 `usagemesh sync`——包括系统定时任务自动执行的后台同步——都会检查 GitHub 上最新的**稳定版** Release。发现新版本后，UsageMesh 会自动下载当前系统对应的发布包和 SHA-256 校验文件，完成校验，把用户自己的 Fork 同步到当前上游，然后原地替换 CLI，并自动继续本次同步。
+
+对普通用户来说，最重要的是升级过程**不会重新初始化工作区**。仓库地址、工作区密钥、Dashboard 密码、设备 ID 和原先设置的同步间隔都保持不变。原来 15 分钟同步的机器升级后仍然是 15 分钟；原来 60 分钟的仍然是 60 分钟。正常情况下用户只需要第一次执行 `setup`，之后无需再主动管理版本。
+
+正式版本只有在 Linux x64/ARM64、macOS Intel/Apple Silicon、Windows x64/ARM64 六个平台全部完成构建、测试和安装冒烟测试以后，才会从候选 prerelease 提升为 `latest`。失败的候选版本不会被自动更新程序看到。
+
+如果受控环境不希望自动升级，可以设置 `USAGEMESH_AUTO_UPDATE=0`。重新运行最初的安装命令仍然保留为恢复手段；安装器检测到已有配置后会自动完成全量刷新，不再要求用户额外执行第二条升级命令。
+
+## Dashboard 如何保持最新
 
 用户在 Fork 中启用 **Deploy Dashboard** 以后，每次部署都会直接使用当前 `Atingaii/UsageMesh` 上游的最新 Dashboard 源码，而不是盲目使用用户 Fork 里可能已经过期的 `web-ui` 副本。工作流还会**每天自动部署一次**，因此后续的网页修复可以自动进入用户自己的 GitHub Pages，不需要重新 Fork。
 
 部署后的站点会额外生成 `/build-info.json`，里面记录当前工作区仓库、Dashboard 上游仓库以及本次真正使用的上游 commit SHA。以后如果出现“网页明明设置正确但行为像旧版本”的问题，可以直接判断是否为旧部署，而不会误报成密码错误。
-
-已经安装过 UsageMesh 的设备，需要升级时重新运行安装命令，然后执行：
-
-```bash
-usagemesh sync --full
-```
-
-它会同时刷新本地历史统计、设备索引，并把 Fork 的源码同步到当前上游版本。
 
 ## 添加新设备
 
