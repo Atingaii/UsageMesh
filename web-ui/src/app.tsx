@@ -103,7 +103,20 @@ type ActiveTab = 'overview' | 'analytics' | 'devices' | 'aggregated';
 
 const LITELLM_COST_MAP_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 const CACHE_KEY = 'usagemesh:litellm-cost-map:v1';
-const FAST_SUBSCRIPTION_MULTIPLIER = 2.5;
+function subscriptionSpeedMultiplier(record: UsageRecord): number {
+  const tier = String(record.tier || '').trim().toLowerCase();
+  if (record.tool.trim().toLowerCase() !== 'codex' || (tier !== 'fast' && tier !== 'priority')) {
+    return 1;
+  }
+
+  const model = normalizeModel(record.model);
+  // OpenAI Codex / ChatGPT Work official Speed rate card (2026-08):
+  // GPT-5.6 and GPT-5.5 Fast consume 2.5x Standard credits; GPT-5.4 consumes 2x.
+  // API-key Priority/Fast is deliberately NOT inferred here: it has separate API pricing.
+  if (model.startsWith('gpt-5.6') || model.startsWith('gpt-5.5')) return 2.5;
+  if (model.startsWith('gpt-5.4')) return 2;
+  return 1;
+}
 
 type CostEntry = Record<string, unknown> & {
   litellm_provider?: string;
@@ -232,8 +245,7 @@ function quote(map: CostMap, record: UsageRecord): number | null {
   // UsageMesh's dashboard is subscription-equivalent usage, not the API
   // Priority price card. OpenAI's ChatGPT/Codex Fast mode consumes 2.5x the
   // Standard rate, so Fast and the raw service-tier label Priority use 2.5x.
-  const tier = record.tier.trim().toLowerCase();
-  const multiplier = tier === 'fast' || tier === 'priority' ? FAST_SUBSCRIPTION_MULTIPLIER : 1;
+  const multiplier = subscriptionSpeedMultiplier(record);
 
   const cost = (
     Math.max(0, record.inputTokens) * input +
@@ -303,10 +315,10 @@ async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatu
   }
 
   return {
-    source: `${loaded.source} · Fast 2.5×`,
+    source: `${loaded.source} · Fast`,
     sourceUrl: LITELLM_COST_MAP_URL,
     updatedAt: loaded.fetchedAt ? new Date(loaded.fetchedAt).toISOString() : null,
-    fastMultiplier: FAST_SUBSCRIPTION_MULTIPLIER,
+    fastMultiplier: 2.5,
     resolvedRows,
     fallbackRows,
   };
@@ -315,8 +327,38 @@ async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatu
 const RAW = 'https://raw.githubusercontent.com';
 const DEFAULT_REPO = 'Atingaii/UsageMesh';
 const ACCESS_BRANCH = 'um-dashboard';
+const DEVICE_INDEX_BRANCH = 'um-index';
 const ACCESS_AAD_PREFIX = 'usagemesh-dashboard-access-v1:';
 const LEDGER_AAD_PREFIX = 'usagemesh-ledger-v2:';
+const REMEMBERED_WORKSPACE_KEY_PREFIX = 'usagemesh:remembered-workspace-key:v1:';
+
+function rememberedWorkspaceStorageKey(repo: string): string {
+  return `${REMEMBERED_WORKSPACE_KEY_PREFIX}${repo.toLowerCase()}`;
+}
+
+function readRememberedWorkspaceKey(repo: string): string {
+  try {
+    return sessionStorage.getItem(rememberedWorkspaceStorageKey(repo)) || '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberWorkspaceKey(repo: string, encodedKey: string) {
+  try {
+    sessionStorage.setItem(rememberedWorkspaceStorageKey(repo), encodedKey);
+  } catch {
+    // Storage may be unavailable in private browsing; normal password unlock still works.
+  }
+}
+
+function forgetRememberedWorkspaceKey(repo: string) {
+  try {
+    sessionStorage.removeItem(rememberedWorkspaceStorageKey(repo));
+  } catch {
+    // Best-effort local logout.
+  }
+}
 
 interface AccessEnvelope {
   schemaVersion: number;
@@ -431,6 +473,11 @@ async function workspaceKey(repo: string, password: string): Promise<string> {
 
 async function loadDeviceIndex(repo: string): Promise<string[]> {
   const urls = [
+    // The CLI updates this branch on every successful sync, so newly joined
+    // devices become visible immediately without rebuilding GitHub Pages.
+    `${RAW}/${repo}/${DEVICE_INDEX_BRANCH}/index.json`,
+    // Legacy/static fallbacks keep older workspaces and transient raw GitHub
+    // failures usable, but they are no longer the source of truth.
     `${RAW}/${repo}/${ACCESS_BRANCH}/device-index.json`,
     new URL('device-index.json', document.baseURI).toString(),
   ];
@@ -538,9 +585,7 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
   };
 }
 
-async function loadDashboard(password: string): Promise<DashboardDataset> {
-  const repo = repoFromLocation();
-  const key = await workspaceKey(repo, password);
+async function loadDashboardWithKey(repo: string, key: string): Promise<DashboardDataset> {
   const branches = await loadDeviceIndex(repo);
   const settled = await Promise.allSettled(branches.map(branch => decryptLedger(repo, branch, key)));
   const ledgers = settled.filter((item): item is PromiseFulfilledResult<Ledger> => item.status === 'fulfilled').map(item => item.value);
@@ -553,6 +598,13 @@ async function loadDashboard(password: string): Promise<DashboardDataset> {
   const pricing = await applyDynamicPricing(records);
   const lastSync = ledgers.map(ledger => String(ledger.generatedAt || '')).filter(Boolean).sort().at(-1) || '';
   return { repo, records, pricing, lastSync };
+}
+
+async function unlockDashboard(password: string): Promise<{ dataset: DashboardDataset; key: string }> {
+  const repo = repoFromLocation();
+  const key = await workspaceKey(repo, password);
+  const dataset = await loadDashboardWithKey(repo, key);
+  return { dataset, key };
 }
 
 interface SidebarProps {
@@ -581,10 +633,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, onToggleCollapse, active
       <div className="flex items-center justify-between h-14 px-3 border-b border-[var(--border-color)] shrink-0">
         {!isCollapsed ? (
           <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--accent-blue)] text-white font-mono font-bold text-sm shadow-sm shrink-0"><Terminal className="w-4 h-4" /></div>
+            <img src={`${import.meta.env.BASE_URL}usagemesh-icon.svg`} alt="" className="w-8 h-8 rounded-lg shadow-sm shrink-0" />
             <div className="min-w-0 transition-opacity duration-200"><div className="text-sm font-semibold tracking-tight text-[var(--text-primary)] truncate">UsageMesh</div><div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wider uppercase truncate">Usage Console</div></div>
           </div>
-        ) : <div title="UsageMesh Usage Console" className="flex items-center justify-center w-8 h-8 rounded-lg bg-[var(--accent-blue)] text-white font-mono font-bold text-sm mx-auto shadow-sm">T</div>}
+        ) : <img src={`${import.meta.env.BASE_URL}usagemesh-icon.svg`} alt="UsageMesh" title="UsageMesh Usage Console" className="w-8 h-8 rounded-lg shadow-sm mx-auto" />}
         <button onClick={onToggleCollapse} title={isCollapsed ? '展开侧边栏' : '折叠侧边栏'} className={`p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition cursor-pointer ${isCollapsed ? 'hidden' : 'block'}`}><PanelLeftClose className="w-4 h-4" /></button>
       </div>
       <div className="flex-1 py-3 px-2 space-y-4 overflow-x-hidden overflow-y-auto">
@@ -621,7 +673,7 @@ interface TopbarProps {
   isSidebarCollapsed: boolean; onToggleSidebar: () => void;
 }
 
-const Topbar: React.FC<TopbarProps> = ({ title, subtitle, repoBadge = 'Atingaii/UsageMesh', pricingBadge = 'LiteLLM live · Fast 2.5×', lastSyncTime, syncStatus, deviceCount, isDarkMode, onToggleDarkMode, onRefresh, onLock, isSidebarCollapsed, onToggleSidebar }) => (
+const Topbar: React.FC<TopbarProps> = ({ title, subtitle, repoBadge = 'Atingaii/UsageMesh', pricingBadge = 'LiteLLM live · Fast', lastSyncTime, syncStatus, deviceCount, isDarkMode, onToggleDarkMode, onRefresh, onLock, isSidebarCollapsed, onToggleSidebar }) => (
   <header className="sticky top-0 z-20 border-b border-[var(--border-color)] bg-[var(--bg-main)]/90 backdrop-blur-md px-4 lg:px-6 py-3 transition-colors">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
@@ -629,7 +681,7 @@ const Topbar: React.FC<TopbarProps> = ({ title, subtitle, repoBadge = 'Atingaii/
         <div><div className="flex items-center gap-2"><h1 className="text-lg lg:text-xl font-semibold tracking-tight text-[var(--text-primary)]">{title}</h1>{repoBadge && <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md"><Database className="w-3 h-3 text-[var(--accent-blue)]" />{repoBadge}</span>}</div><p className="text-xs text-[var(--text-muted)] mt-0.5">{subtitle}</p></div>
       </div>
       <div className="flex items-center flex-wrap gap-2 text-xs">
-        <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent-blue-light)] border border-[var(--accent-blue-border)] text-[var(--accent-blue)] font-medium"><ShieldCheck className="w-3.5 h-3.5" /><span>{pricingBadge}</span></div>
+        {pricingBadge && <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent-blue-light)] border border-[var(--accent-blue-border)] text-[var(--accent-blue)] font-medium"><ShieldCheck className="w-3.5 h-3.5" /><span>{pricingBadge}</span></div>}
         <div className="hidden md:block text-[var(--text-muted)] font-mono">{syncStatus === 'syncing' ? '正在同步加密数据…' : `数据更新于 ${lastSyncTime}`}</div>
         <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-secondary)] font-medium"><span className={`w-2 h-2 rounded-full ${syncStatus === 'syncing' ? 'bg-amber-500 animate-ping' : syncStatus === 'error' ? 'bg-red-500' : 'bg-emerald-500 animate-pulse'}`} /><span>{syncStatus === 'syncing' ? '同步中' : syncStatus === 'error' ? '部分设备异常' : `${deviceCount} 台设备已同步`}</span></div>
         <button onClick={onRefresh} title="刷新数据" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] transition active:scale-95 cursor-pointer font-medium"><RefreshCw className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} /><span className="hidden sm:inline">刷新</span></button>
@@ -659,7 +711,7 @@ const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock, error }) => {
   return (
     <div className="relative min-h-screen flex flex-col justify-between bg-[var(--bg-main)] text-[var(--text-primary)] transition-colors p-4">
       <div className="w-full flex items-center justify-between py-3 px-4 border-b border-[var(--border-color)] bg-[var(--bg-card)]/50 backdrop-blur-xs rounded-xl max-w-5xl mx-auto opacity-70">
-        <div className="flex items-center gap-2.5"><div className="w-7 h-7 rounded-lg bg-[var(--accent-blue)] text-white flex items-center justify-center font-mono font-bold text-xs">T</div><span className="font-semibold text-sm tracking-tight">UsageMesh</span><span className="text-xs px-2 py-0.5 rounded bg-[var(--bg-card-hover)] border border-[var(--border-color)] text-[var(--text-muted)] font-mono">Atingaii/UsageMesh</span></div>
+        <div className="flex items-center gap-2.5"><img src={`${import.meta.env.BASE_URL}usagemesh-icon.svg`} alt="" className="w-7 h-7 rounded-lg" /><span className="font-semibold text-sm tracking-tight">UsageMesh</span></div>
         <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] font-mono"><Lock className="w-3.5 h-3.5 text-amber-500" /><span>Encrypted Session</span></div>
       </div>
 
@@ -785,7 +837,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
   const fmt = (num: number) => Math.round(num).toLocaleString('en-US');
   const kpis = [
     { id: 'total', title: '总 Tokens', value: fmt(totalTokens), subtext: '当前筛选范围', icon: Cpu, highlight: false },
-    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: pricing.source, icon: Coins, highlight: true, info: true },
+    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: 'API 等价估算', icon: Coins, highlight: true, info: false },
     { id: 'input', title: '输入 Tokens', value: fmt(inputTokens), subtext: 'Fresh input', icon: ArrowDownRight, highlight: false },
     { id: 'cache', title: '缓存读取', value: fmt(cacheReadTokens), subtext: 'Cache read', icon: Database, highlight: false },
     { id: 'output', title: '输出 Tokens', value: fmt(outputTokens), subtext: 'Output', icon: ArrowUpRight, highlight: false },
@@ -975,7 +1027,7 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
   const csv = (value: unknown) => { const s = String(value ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
   const exportToCSV = () => {
     const headers = ['Date','Device','Tool','Model','Vendor','Route Provider','Route Type','Raw Provider','Tier','Input Tokens','Cache Read','Cache Write','Output Tokens','Reasoning','Total Tokens','Requests','Subscription Equivalent Cost USD','Dynamic Pricing'];
-    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.pricingResolved ? 'LiteLLM' : 'Ledger fallback']);
+    const rows = sorted.map(r => [r.date,r.device,r.tool,r.model,r.vendor,r.routeProvider,r.routeType,r.rawProvider,r.tier,r.inputTokens,r.cacheReadTokens,r.cacheWriteTokens,r.outputTokens,r.reasoningTokens,r.totalTokens,r.requestsCount,r.cost.toFixed(6),r.pricingResolved ? 'Dynamic' : 'Stored']);
     const blob = new Blob([[headers,...rows].map(row => row.map(csv).join(',')).join('\n')], { type:'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `usagemesh-export-${Date.now()}.csv`; link.click(); URL.revokeObjectURL(url);
   };
@@ -995,7 +1047,7 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
         <th onClick={() => handleSort('date')} className="px-3.5 py-3 cursor-pointer hover:text-[var(--text-primary)]"><div className="flex items-center gap-1"><span>日期</span><ArrowUpDown className="w-3 h-3" /></div></th>
         <th onClick={() => handleSort('device')} className="px-3.5 py-3 cursor-pointer">设备</th><th onClick={() => handleSort('tool')} className="px-3.5 py-3 cursor-pointer">工具</th><th onClick={() => handleSort('model')} className="px-3.5 py-3 cursor-pointer">模型</th><th onClick={() => handleSort('vendor')} className="px-3.5 py-3 cursor-pointer">模型厂商</th><th onClick={() => handleSort('routeProvider')} className="px-3.5 py-3 cursor-pointer">路由提供商</th><th className="px-3.5 py-3">路由类型</th><th className="px-3.5 py-3">Tier</th><th onClick={() => handleSort('inputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输入 Tokens</th><th onClick={() => handleSort('cacheReadTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Read</th><th onClick={() => handleSort('cacheWriteTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Write</th><th onClick={() => handleSort('outputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输出 Tokens</th><th onClick={() => handleSort('reasoningTokens')} className="px-3.5 py-3 text-right cursor-pointer">Reasoning</th><th onClick={() => handleSort('totalTokens')} className="px-3.5 py-3 text-right cursor-pointer">总 Tokens</th><th onClick={() => handleSort('cost')} className="px-3.5 py-3 text-right cursor-pointer">订阅等价费用</th>
       </tr></thead>
-      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{sorted.map(r => <tr key={r.id} className="hover:bg-[var(--bg-card-hover)] transition h-11"><td className="px-3.5 py-2.5 text-[var(--text-secondary)]">{r.date}</td><td className="px-3.5 py-2.5 font-medium text-[var(--text-primary)]">{r.device}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)] font-semibold">{r.tool}</td><td className="px-3.5 py-2.5 font-bold text-[var(--accent-blue)] max-w-[260px] truncate" title={r.model}>{r.model}</td><td className="px-3.5 py-2.5">{vendorBadge(r.vendor)}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)]">{r.routeProvider}</td><td className="px-3.5 py-2.5">{routeBadge(r.routeType)}</td><td className="px-3.5 py-2.5">{tierBadge(r.tier)}</td><td className="px-3.5 py-2.5 text-right">{r.inputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-emerald-600" title={r.pricingResolved ? 'LiteLLM 动态价格' : '账本内历史价格'}>${r.cost.toFixed(4)}</td></tr>)}{!sorted.length && <tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">当前筛选范围暂无记录</td></tr>}</tbody>
+      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{sorted.map(r => <tr key={r.id} className="hover:bg-[var(--bg-card-hover)] transition h-11"><td className="px-3.5 py-2.5 text-[var(--text-secondary)]">{r.date}</td><td className="px-3.5 py-2.5 font-medium text-[var(--text-primary)]">{r.device}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)] font-semibold">{r.tool}</td><td className="px-3.5 py-2.5 font-bold text-[var(--accent-blue)] max-w-[260px] truncate" title={r.model}>{r.model}</td><td className="px-3.5 py-2.5">{vendorBadge(r.vendor)}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)]">{r.routeProvider}</td><td className="px-3.5 py-2.5">{routeBadge(r.routeType)}</td><td className="px-3.5 py-2.5">{tierBadge(r.tier)}</td><td className="px-3.5 py-2.5 text-right">{r.inputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-emerald-600" title={r.pricingResolved ? '动态价格' : '账本内价格'}>${r.cost.toFixed(4)}</td></tr>)}{!sorted.length && <tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">当前筛选范围暂无记录</td></tr>}</tbody>
     </table></div><div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border-color)] bg-[var(--bg-main)] text-xs"><div className="text-[var(--text-muted)] font-mono">显示 1 - {sorted.length} 共 {sorted.length} 条记录</div><div className="flex items-center gap-1.5"><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronLeft className="w-4 h-4" /></button><span className="px-2 py-0.5 rounded bg-[var(--accent-blue)] text-white font-mono font-bold">1</span><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronRight className="w-4 h-4" /></button></div></div></div>
   </div>;
 };
@@ -1011,43 +1063,103 @@ const analysisColors = ['#2563eb','#10b981','#8b5cf6','#f59e0b','#06b6d4','#ec48
 const analysisCompact = (n:number) => n >= 1e9 ? `${(n/1e9).toFixed(1)}B` : n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1e3 ? `${(n/1e3).toFixed(0)}K` : Math.round(n).toString();
 
 const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records }) => {
+  type Dimension = 'model' | 'device' | 'tool' | 'tier' | 'routeProvider';
+  type Metric = 'totalTokens' | 'cost' | 'requestsCount';
+  const [dimension, setDimension] = useState<Dimension>('model');
   const [metric, setMetric] = useState<Metric>('totalTokens');
-  const [group, setGroup] = useState<Group>('model');
-  const [chartType, setChartType] = useState<ChartType>('bar');
 
-  const data = useMemo(() => {
-    const map = new Map<string,{name:string,value:number,cost:number,requests:number}>();
+  const summary = useMemo(() => {
+    const totalTokens = sum(records, 'totalTokens');
+    const input = sum(records, 'inputTokens');
+    const cacheRead = sum(records, 'cacheReadTokens');
+    const cacheWrite = sum(records, 'cacheWriteTokens');
+    const output = sum(records, 'outputTokens') + sum(records, 'reasoningTokens');
+    const requests = sum(records, 'requestsCount');
+    const cost = sum(records, 'cost');
+    const inputSide = input + cacheRead + cacheWrite;
+    return {
+      cacheHitRate: inputSide ? cacheRead / inputSide * 100 : 0,
+      freshInputShare: inputSide ? input / inputSide * 100 : 0,
+      outputInputRatio: inputSide ? output / inputSide * 100 : 0,
+      avgTokensPerRequest: requests ? totalTokens / requests : 0,
+      avgCostPerRequest: requests ? cost / requests : 0,
+      equivalentCostPerMillion: totalTokens ? cost / totalTokens * 1_000_000 : 0,
+    };
+  }, [records]);
+
+  const dimensionLabels: Record<Dimension, string> = { model:'模型', device:'设备', tool:'客户端', tier:'模式', routeProvider:'路由' };
+  const metricLabels: Record<Metric, string> = { totalTokens:'Tokens', cost:'订阅等价费用', requestsCount:'请求记录' };
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, { name:string; totalTokens:number; cost:number; requestsCount:number }>();
     for (const row of records) {
-      const name = String(row[group] || '未知');
-      const item = map.get(name) || { name, value:0, cost:0, requests:0 };
-      item.value += Number(row[metric] || 0); item.cost += row.cost; item.requests += row.requestsCount;
-      map.set(name,item);
+      const name = String(row[dimension] || '未知');
+      const item = map.get(name) || { name, totalTokens:0, cost:0, requestsCount:0 };
+      item.totalTokens += row.totalTokens; item.cost += row.cost; item.requestsCount += row.requestsCount;
+      map.set(name, item);
     }
-    const result = [...map.values()].sort((a,b) => group === 'date' ? a.name.localeCompare(b.name) : b.value - a.value);
-    return group === 'date' ? result : result.slice(0,24);
-  }, [records,metric,group]);
+    return [...map.values()].sort((a,b) => Number(b[metric]) - Number(a[metric])).slice(0,14);
+  }, [records, dimension, metric]);
 
-  const format = (value:number) => metric === 'cost' ? `$${value.toFixed(value < 1 ? 3 : 2)}` : analysisCompact(value);
-  const tooltip = ({active,payload,label}:any) => active && payload?.length ? <div className="bg-slate-950/95 text-white text-xs p-3 rounded-xl border border-slate-800 shadow-xl font-mono"><div className="text-slate-400 mb-1 max-w-[260px] break-all">{label}</div><div className="font-bold text-blue-400">{metricLabels[metric]}: {metric === 'cost' ? `$${Number(payload[0].value).toFixed(4)}` : Number(payload[0].value).toLocaleString()}</div></div> : null;
+  const topShare = useMemo(() => {
+    const total = grouped.reduce((n,item) => n + Number(item[metric]), 0);
+    const top3 = grouped.slice(0,3).reduce((n,item) => n + Number(item[metric]), 0);
+    return total ? top3 / total * 100 : 0;
+  }, [grouped, metric]);
 
-  return <div className="space-y-4 transition-analysisColors">
-    <div className="flex flex-wrap items-center justify-between gap-3 bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-3.5 shadow-2xs">
-      <div className="flex items-center gap-2"><BarChart3 className="w-4 h-4 text-[var(--accent-blue)]" /><div><h2 className="text-sm font-semibold text-[var(--text-primary)]">高级用量分析</h2><p className="text-[10px] text-[var(--text-muted)] mt-0.5">按任意已识别维度聚合 Token 与订阅等价费用</p></div></div>
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-[10px] text-[var(--text-muted)]">指标<select value={metric} onChange={e => setMetric(e.target.value as Metric)} className="block mt-1 h-8 px-2.5 rounded-lg bg-[var(--bg-main)] border border-[var(--border-color)] text-xs text-[var(--text-primary)] outline-none">{Object.entries(metricLabels).map(([k,v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-        <label className="text-[10px] text-[var(--text-muted)]">分组<select value={group} onChange={e => setGroup(e.target.value as Group)} className="block mt-1 h-8 px-2.5 rounded-lg bg-[var(--bg-main)] border border-[var(--border-color)] text-xs text-[var(--text-primary)] outline-none">{Object.entries(groupLabels).map(([k,v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-        <div className="inline-flex p-0.5 rounded-lg bg-[var(--bg-main)] border border-[var(--border-color)]">{([['bar',BarChart3],['line',Layers3],['pie',PieIcon],['table',Table2]] as const).map(([id,Icon]) => <button key={id} onClick={() => setChartType(id)} title={id} className={`p-1.5 rounded-md ${chartType===id ? 'bg-[var(--accent-blue)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}><Icon className="w-3.5 h-3.5" /></button>)}</div>
-      </div>
-    </div>
+  const matrix = useMemo(() => {
+    const dt = new Map<string,number>(), mt = new Map<string,number>();
+    for (const row of records) { dt.set(row.device,(dt.get(row.device)||0)+row.totalTokens); mt.set(row.model,(mt.get(row.model)||0)+row.totalTokens); }
+    const devices=[...dt.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([n])=>n);
+    const models=[...mt.entries()].sort((a,b)=>b[1]-a[1]).slice(0,6).map(([n])=>n);
+    const values=new Map<string,number>(); let max=1;
+    for (const row of records) if (devices.includes(row.device) && models.includes(row.model)) {
+      const key=`${row.device}|||${row.model}`; const value=(values.get(key)||0)+row.totalTokens; values.set(key,value); max=Math.max(max,value);
+    }
+    return {devices,models,values,max};
+  }, [records]);
 
-    <div className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-4 shadow-2xs min-h-[420px]">
-      {(chartType === 'bar' || chartType === 'line') && <div className="h-[390px] w-full min-w-0"><ResponsiveContainer width="100%" height="100%">
-        {chartType === 'bar' ? <BarChart data={data} margin={{top:12,right:16,left:8,bottom:group==='date'?8:80}}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode?'#262a33':'#f1f5f9'} /><XAxis dataKey="name" tick={{fontSize:10,fill:isDarkMode?'#9ca3af':'#6b7280'}} angle={group==='date'?0:-28} textAnchor={group==='date'?'middle':'end'} interval={0} height={group==='date'?30:95} tickFormatter={v => String(v).length>18?`${String(v).slice(0,18)}…`:v}/><YAxis tickFormatter={format} width={72} tick={{fontSize:10,fill:isDarkMode?'#9ca3af':'#6b7280'}} /><Tooltip content={tooltip}/><Bar dataKey="value" fill="#2563eb" radius={[4,4,0,0]} /></BarChart> : <LineChart data={data} margin={{top:12,right:16,left:8,bottom:group==='date'?8:80}}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode?'#262a33':'#f1f5f9'} /><XAxis dataKey="name" tick={{fontSize:10,fill:isDarkMode?'#9ca3af':'#6b7280'}} angle={group==='date'?0:-28} textAnchor={group==='date'?'middle':'end'} interval={0} height={group==='date'?30:95} tickFormatter={v => String(v).length>18?`${String(v).slice(0,18)}…`:v}/><YAxis tickFormatter={format} width={72} tick={{fontSize:10,fill:isDarkMode?'#9ca3af':'#6b7280'}} /><Tooltip content={tooltip}/><Line type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={2} dot={false} activeDot={{r:5}} /></LineChart>}
-      </ResponsiveContainer></div>}
-      {chartType === 'pie' && <div className="h-[390px] w-full"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={data.slice(0,10)} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={70} outerRadius={120} paddingAngle={2}>{data.slice(0,10).map((_,i) => <Cell key={i} fill={analysisColors[i%analysisColors.length]} />)}</Pie><Tooltip formatter={(v:number) => metric==='cost'?`$${Number(v).toFixed(4)}`:Number(v).toLocaleString()} /><Legend wrapperStyle={{fontSize:'11px'}} /></PieChart></ResponsiveContainer></div>}
-      {chartType === 'table' && <div className="overflow-x-auto"><table className="w-full text-xs text-left"><thead className="bg-[var(--bg-main)] text-[var(--text-muted)] font-mono border-b border-[var(--border-color)]"><tr><th className="p-2.5">{groupLabels[group]}</th><th className="p-2.5 text-right">{metricLabels[metric]}</th><th className="p-2.5 text-right">费用</th><th className="p-2.5 text-right">请求记录</th></tr></thead><tbody className="divide-y divide-[var(--border-subtle)] font-mono">{data.map(row => <tr key={row.name} className="hover:bg-[var(--bg-card-hover)]"><td className="p-2.5 font-semibold text-[var(--text-primary)] max-w-[420px] break-all">{row.name}</td><td className="p-2.5 text-right">{metric==='cost'?`$${row.value.toFixed(4)}`:Math.round(row.value).toLocaleString()}</td><td className="p-2.5 text-right text-emerald-600 font-bold">${row.cost.toFixed(4)}</td><td className="p-2.5 text-right text-[var(--text-secondary)]">{row.requests.toLocaleString()}</td></tr>)}</tbody></table></div>}
-      {!data.length && <div className="h-[360px] grid place-items-center text-xs text-[var(--text-muted)]">当前筛选范围暂无分析数据</div>}
-    </div>
+  const combinations = useMemo(() => {
+    const map = new Map<string,{device:string;model:string;tool:string;tier:string;totalTokens:number;cost:number;requests:number;cacheRead:number;inputSide:number}>();
+    for (const row of records) {
+      const key=`${row.device}|||${row.model}|||${row.tool}|||${row.tier}`;
+      const item=map.get(key)||{device:row.device,model:row.model,tool:row.tool,tier:row.tier,totalTokens:0,cost:0,requests:0,cacheRead:0,inputSide:0};
+      item.totalTokens+=row.totalTokens; item.cost+=row.cost; item.requests+=row.requestsCount; item.cacheRead+=row.cacheReadTokens; item.inputSide+=row.inputTokens+row.cacheReadTokens+row.cacheWriteTokens; map.set(key,item);
+    }
+    return [...map.values()].sort((a,b)=>b.totalTokens-a.totalTokens).slice(0,12);
+  }, [records]);
+
+  const compact=(value:number)=>analysisCompact(Number(value||0));
+  const metricFormat=(value:number)=>metric==='cost'?`$${Number(value).toFixed(value<1?3:2)}`:metric==='requestsCount'?Math.round(value).toLocaleString():compact(value);
+  const barTooltip=({active,payload}:any)=>active&&payload?.length?<div className="rounded-xl border border-slate-800 bg-slate-950/95 p-3 text-xs text-white shadow-xl font-mono min-w-[220px]"><div className="mb-2 border-b border-slate-800 pb-1.5 text-slate-400 break-all">{payload[0].payload.name}</div><div className="flex justify-between gap-4"><span>{metricLabels[metric]}</span><span className="font-bold text-blue-400">{metricFormat(Number(payload[0].payload[metric]))}</span></div><div className="mt-1 flex justify-between gap-4 text-slate-400"><span>Tokens</span><span>{Math.round(payload[0].payload.totalTokens).toLocaleString()}</span></div><div className="mt-1 flex justify-between gap-4 text-slate-400"><span>费用</span><span>${payload[0].payload.cost.toFixed(4)}</span></div></div>:null;
+
+  const stats=[
+    ['缓存命中率',`${summary.cacheHitRate.toFixed(1)}%`,'输入侧缓存读取占比'],
+    ['平均 Tokens / 请求',Math.round(summary.avgTokensPerRequest).toLocaleString(),`平均费用 $${summary.avgCostPerRequest.toFixed(3)}`],
+    ['输出 / 输入侧',`${summary.outputInputRatio.toFixed(1)}%`,`新增输入占比 ${summary.freshInputShare.toFixed(1)}%`],
+    ['等价费用 / 1M Tokens',`$${summary.equivalentCostPerMillion.toFixed(2)}`,'用于结构效率比较，不代表账单'],
+  ];
+
+  return <div className="space-y-4 transition-colors">
+    <section className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] p-4 shadow-2xs">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Layers3 className="h-4 w-4 text-[var(--accent-blue)]" /><h2 className="text-base font-semibold text-[var(--text-primary)]">分析工作台</h2></div><p className="mt-1 text-xs text-[var(--text-muted)]">概览回答“用了多少”，这里用于定位“为什么高、由谁贡献、结构是否健康”。</p></div><div className="rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] px-3 py-2 text-right"><div className="text-[10px] text-[var(--text-muted)]">TOP 3 集中度</div><div className="font-mono text-sm font-bold text-[var(--text-primary)]">{topShare.toFixed(1)}%</div></div></div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{stats.map(([label,value,note])=><div key={label} className="rounded-xl border border-[var(--border-color)] bg-[var(--bg-main)]/50 p-3.5"><div className="text-[11px] font-medium text-[var(--text-muted)]">{label}</div><div className="mt-1 font-mono-numbers text-xl font-bold text-[var(--text-primary)]">{value}</div><div className="mt-1 text-[10px] text-[var(--text-muted)]">{note}</div></div>)}</div>
+    </section>
+
+    <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3.5"><div><h3 className="text-sm font-semibold text-[var(--text-primary)]">结构贡献</h3><p className="mt-0.5 text-xs text-[var(--text-muted)]">切换维度与指标，找出当前筛选范围内的主要贡献者</p></div><div className="flex gap-2"><label className="text-[10px] text-[var(--text-muted)]">维度<select value={dimension} onChange={e=>setDimension(e.target.value as Dimension)} className="mt-1 block h-8 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] px-2.5 text-xs text-[var(--text-primary)]">{Object.entries(dimensionLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label><label className="text-[10px] text-[var(--text-muted)]">指标<select value={metric} onChange={e=>setMetric(e.target.value as Metric)} className="mt-1 block h-8 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] px-2.5 text-xs text-[var(--text-primary)]">{Object.entries(metricLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label></div></div>
+      <div className="h-[390px] w-full p-3 lg:p-4"><ResponsiveContainer width="100%" height="100%"><BarChart data={grouped} layout="vertical" margin={{top:4,right:28,left:12,bottom:4}}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={isDarkMode?'#262a33':'#eef2f7'} /><XAxis type="number" tickFormatter={metricFormat} tick={{fontSize:10,fill:isDarkMode?'#9ca3af':'#667085'}} axisLine={false} tickLine={false}/><YAxis type="category" dataKey="name" width={120} tick={{fontSize:10,fill:isDarkMode?'#d1d5db':'#475467'}} axisLine={false} tickLine={false} tickFormatter={v=>String(v).length>18?`${String(v).slice(0,18)}…`:String(v)}/><Tooltip content={barTooltip}/><Bar dataKey={metric} fill="#2563eb" radius={[0,4,4,0]}/></BarChart></ResponsiveContainer></div>
+    </section>
+
+    <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
+      <div className="border-b border-[var(--border-color)] px-4 py-3.5"><div className="flex items-center gap-2"><Monitor className="h-4 w-4 text-[var(--accent-blue)]"/><h3 className="text-sm font-semibold text-[var(--text-primary)]">设备 × 模型用量矩阵</h3></div><p className="mt-0.5 text-xs text-[var(--text-muted)]">快速识别某台机器是否集中消耗在某个模型上</p></div>
+      <div className="overflow-x-auto p-4">{matrix.devices.length&&matrix.models.length?<div className="min-w-[760px]"><div className="grid gap-1.5" style={{gridTemplateColumns:`180px repeat(${matrix.models.length}, minmax(84px, 1fr))`}}><div/>{matrix.models.map(m=><div key={m} className="truncate px-2 pb-1 text-center text-[10px] font-mono text-[var(--text-muted)]" title={m}>{m}</div>)}{matrix.devices.flatMap(d=>[<div key={`${d}-label`} className="flex items-center truncate pr-3 text-xs font-medium text-[var(--text-primary)]" title={d}>{d}</div>,...matrix.models.map(m=>{const value=matrix.values.get(`${d}|||${m}`)||0;const opacity=value?0.12+0.78*(value/matrix.max):0.04;return <div key={`${d}-${m}`} title={`${d} / ${m}: ${Math.round(value).toLocaleString()} Tokens`} className="rounded-md border border-blue-500/10 px-2 py-3 text-center font-mono text-[10px] text-[var(--text-primary)]" style={{backgroundColor:`rgba(37, 99, 235, ${opacity})`}}>{value?compact(value):'—'}</div>})])}</div></div>:<div className="py-10 text-center text-xs text-[var(--text-muted)]">当前筛选范围暂无矩阵数据</div>}</div>
+    </section>
+
+    <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
+      <div className="border-b border-[var(--border-color)] px-4 py-3.5"><div className="flex items-center gap-2"><Table2 className="h-4 w-4 text-[var(--accent-blue)]"/><h3 className="text-sm font-semibold text-[var(--text-primary)]">高消耗组合</h3></div><p className="mt-0.5 text-xs text-[var(--text-muted)]">按“设备 + 模型 + 客户端 + 模式”聚合，便于定位异常来源</p></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="border-b border-[var(--border-color)] bg-[var(--bg-main)] text-[10px] font-mono text-[var(--text-muted)]"><tr><th className="p-3">设备</th><th className="p-3">模型</th><th className="p-3">客户端</th><th className="p-3">模式</th><th className="p-3 text-right">Tokens</th><th className="p-3 text-right">费用</th><th className="p-3 text-right">请求</th><th className="p-3 text-right">缓存命中率</th></tr></thead><tbody className="divide-y divide-[var(--border-subtle)]">{combinations.map((item,i)=>{const hit=item.inputSide?item.cacheRead/item.inputSide*100:0;return <tr key={`${item.device}-${item.model}-${i}`} className="hover:bg-[var(--bg-card-hover)]"><td className="p-3 font-medium text-[var(--text-primary)]">{item.device}</td><td className="p-3 font-mono text-[var(--text-primary)]">{item.model}</td><td className="p-3 text-[var(--text-secondary)]">{item.tool}</td><td className="p-3"><span className="rounded bg-blue-500/10 px-1.5 py-0.5 font-mono text-[10px] text-blue-600 dark:text-blue-400">{item.tier}</span></td><td className="p-3 text-right font-mono font-semibold">{Math.round(item.totalTokens).toLocaleString()}</td><td className="p-3 text-right font-mono text-emerald-600">${item.cost.toFixed(4)}</td><td className="p-3 text-right font-mono">{Math.round(item.requests).toLocaleString()}</td><td className="p-3 text-right font-mono">{hit.toFixed(1)}%</td></tr>})}</tbody></table></div>
+    </section>
   </div>;
 };
 
@@ -1098,7 +1210,8 @@ function devices(records: UsageRecord[]): DeviceInfo[] {
 
 function App() {
   const [dataset, setDataset] = useState<DashboardDataset | null>(null);
-  const [password, setPassword] = useState('');
+  const [workspaceKeyValue, setWorkspaceKeyValue] = useState('');
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('usagemesh:theme') === 'dark');
@@ -1108,19 +1221,57 @@ function App() {
 
   useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); localStorage.setItem('usagemesh:theme', isDarkMode ? 'dark' : 'light'); }, [isDarkMode]);
   useEffect(() => { localStorage.setItem('usagemesh:sidebar', isSidebarCollapsed ? 'collapsed' : 'expanded'); }, [isSidebarCollapsed]);
+  useEffect(() => {
+    let cancelled = false;
+    const repo = repoFromLocation();
+    const remembered = readRememberedWorkspaceKey(repo);
+    if (!remembered) {
+      setIsRestoringSession(false);
+      return () => { cancelled = true; };
+    }
+
+    setSyncStatus('syncing');
+    loadDashboardWithKey(repo, remembered)
+      .then(next => {
+        if (cancelled) return;
+        setDataset(next);
+        setWorkspaceKeyValue(remembered);
+        setSyncStatus('synced');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUnlockError('已保存的登录态无法恢复，请重新输入 Dashboard 密码');
+        setSyncStatus('error');
+      })
+      .finally(() => {
+        if (!cancelled) setIsRestoringSession(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const unlock = async (nextPassword: string) => {
     setUnlockError(null); setSyncStatus('syncing');
-    try { const next = await loadDashboard(nextPassword); setDataset(next); setPassword(nextPassword); setSyncStatus('synced'); }
+    try {
+      const { dataset: next, key } = await unlockDashboard(nextPassword);
+      rememberWorkspaceKey(next.repo, key);
+      setDataset(next);
+      setWorkspaceKeyValue(key);
+      setSyncStatus('synced');
+    }
     catch (error) { setUnlockError(error instanceof Error ? error.message : String(error)); setSyncStatus('error'); throw error; }
   };
   const refresh = async () => {
-    if (!password) return;
+    if (!workspaceKeyValue) return;
     setSyncStatus('syncing');
-    try { setDataset(await loadDashboard(password)); setSyncStatus('synced'); }
+    try { setDataset(await loadDashboardWithKey(repoFromLocation(), workspaceKeyValue)); setSyncStatus('synced'); }
     catch { setSyncStatus('error'); }
   };
-  const lock = () => { setDataset(null); setPassword(''); setUnlockError(null); };
+  const lock = () => {
+    forgetRememberedWorkspaceKey(repoFromLocation());
+    setDataset(null);
+    setWorkspaceKeyValue('');
+    setUnlockError(null);
+  };
 
   const options = useMemo<DynamicFilterOptions>(() => {
     const rows = dataset?.records || [];
@@ -1151,17 +1302,18 @@ function App() {
   const title = activeTab==='overview'?'概览':activeTab==='analytics'?'用量分析':activeTab==='devices'?'设备':'聚合数据';
   const lastSync = dataset?.lastSync ? new Date(dataset.lastSync).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
 
+  if (!dataset && isRestoringSession) return <div className={isDarkMode ? 'dark' : ''}><div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-primary)] grid place-items-center"><div className="flex items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] px-4 py-3 text-xs text-[var(--text-muted)] shadow-sm"><RefreshCw className="h-4 w-4 animate-spin text-[var(--accent-blue)]" /><span>正在恢复登录...</span></div></div></div>;
   if (!dataset) return <div className={isDarkMode ? 'dark' : ''}><UnlockScreen onUnlock={unlock} error={unlockError} /></div>;
 
   return <div className={`flex h-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-primary)] ${isDarkMode ? 'dark' : ''}`}>
     <Sidebar isCollapsed={isSidebarCollapsed} onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} activeTab={activeTab} onSelectTab={setActiveTab} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onLock={lock} />
     <div className="flex-1 flex flex-col h-full overflow-y-auto w-full">
-      <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与订阅等价费用" repoBadge={dataset.repo} pricingBadge={dataset.pricing.source} lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
+      <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与订阅等价费用" repoBadge="" pricingBadge="" lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
       <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1920px] w-full mx-auto">
         {activeTab==='overview' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><TrendChart isDarkMode={isDarkMode} data={trendRows} /><BreakdownCards records={filtered} /></>}
-        {activeTab==='analytics' && <UsageAnalysisView isDarkMode={isDarkMode} records={filtered} />}
+        {activeTab==='analytics' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><UsageAnalysisView isDarkMode={isDarkMode} records={filtered} /></>}
         {activeTab==='devices' && <DevicesView devices={deviceRows} />}
-        {activeTab==='aggregated' && <AggregatedDataView records={filtered} />}
+        {activeTab==='aggregated' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><AggregatedDataView records={filtered} /></>}
       </main>
     </div>
   </div>;
