@@ -55,3 +55,5 @@ jobs:
           git diff --cached --check
           git commit -m 'feat: harden dashboard security and reasoning metadata'
           git push origin HEAD:feat/security-reasoning-v220
+
+# retry 3: crypto/main anchors use their actual punctuation
