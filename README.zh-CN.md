@@ -20,15 +20,42 @@ UsageMesh 解决的是一个具体问题：当 Codex、Claude Code 等 AI Coding
 - **Fork 即工作区**：数据进入你自己的 Fork，网页属于你自己的 Pages 地址。
 - **概览与分析分工明确**：概览回答“用了多少”，分析页回答“为什么高、由谁贡献、结构是否健康”。
 
-## 三步开始
+## 快速开始
 
-### 1. Fork
+### 1. Fork 仓库并启用 Pages
 
 Fork `Atingaii/UsageMesh` 到自己的 GitHub 账号并保持 **Public**。纯前端 Dashboard 需要在没有服务器代理的情况下读取密文；实际设备明细在上传前已经加密。
 
-GitHub 对新 Fork 的 Actions 有平台级安全限制，不会自动直接执行上游工作流。因此第一次需要进入 Fork 的 **Actions** 页面启用工作流，然后手动运行一次 **Deploy Dashboard**。如果 Pages 尚未启用，则进入 **Settings → Pages → Source → GitHub Actions**，随后重新运行 **Deploy Dashboard**。
+GitHub 对新 Fork 的 Actions 有平台级安全限制，不会自动直接执行上游工作流。因此第一次需要进入你自己 Fork 的 **Actions** 页面启用工作流，然后手动运行一次 **Deploy Dashboard**。如果 Pages 尚未启用，则进入 **Settings → Pages → Source → GitHub Actions**，随后重新运行 **Deploy Dashboard**。
 
-### 2. 安装
+### 2. 准备 GitHub 认证（不需要安装 GitHub CLI）
+
+UsageMesh 需要对**你自己的 Fork**具有写权限，用来更新加密账本分支。推荐使用 Fine-grained Personal Access Token：
+
+1. 打开 GitHub **Settings → Developer settings → Personal access tokens → Fine-grained tokens**，也可以直接访问 [Generate new token](https://github.com/settings/personal-access-tokens/new)。
+2. `Resource owner` 选择自己的 GitHub 账号。
+3. `Repository access` 选择 **Only select repositories**，只勾选自己的 `UsageMesh` Fork。
+4. `Repository permissions` 设置 **Contents → Read and write**。设备同步不需要额外仓库权限。
+5. 设置合理的过期时间并生成 Token；复制好 `github_pat_...`，GitHub 通常不会再次完整显示它。
+
+**不要把 PAT 写进安装命令。** 稍后执行 `usagemesh setup` 时，如果没有检测到其他 GitHub 凭据，UsageMesh 会显示隐藏输入框：
+
+```text
+GitHub token (hidden; stored locally for scheduled sync):
+```
+
+直接粘贴 `github_pat_...` 后按 Enter 即可，终端不回显字符是正常现象。
+
+如果你本来就安装并登录了 GitHub CLI，也可以选择使用：
+
+```bash
+gh auth login
+gh auth status
+```
+
+UsageMesh 会自动尝试读取 `gh auth token`。**GitHub CLI 只是可选方式，不是安装 UsageMesh 的依赖。**
+
+### 3. 安装并初始化 UsageMesh
 
 macOS / Linux：
 
@@ -44,36 +71,17 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` 会发现你的 UsageMesh Fork、创建 Dashboard 密码、完成第一次全量扫描，并安装系统原生的定时同步任务。
+`setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务。
 
-### 3. 打开自己的网页
+GitHub 凭据的读取顺序是：显式 `--token` → `USAGEMESH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN` → 已登录的 `gh auth token` → **终端隐藏输入 PAT**。普通用户无需使用 `--token`，避免把 Token 留在 Shell 历史中。
+
+### 4. 打开自己的 Dashboard
 
 ```bash
 usagemesh dashboard
 ```
 
-地址由 Fork 自动决定，例如 `https://alice.github.io/UsageMesh/`。请优先使用 `usagemesh dashboard` 输出的地址，不要手工猜测大小写或仓库路径。
-
-## github_pat 怎么配置
-
-推荐优先使用：
-
-```bash
-gh auth login
-gh auth status
-usagemesh setup
-```
-
-如果使用 Fine-grained Personal Access Token：
-
-1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**。
-2. `Resource owner` 选择自己的账号。
-3. `Repository access` 选择 **Only select repositories**，只勾选自己的 `UsageMesh` Fork。
-4. `Repository permissions` 设置 **Contents → Read and write**。UsageMesh 的设备同步不需要额外的仓库权限。
-5. 设置合理的过期时间并生成 Token。
-6. 运行 `usagemesh setup`，在隐藏输入提示处粘贴 `github_pat_...`。
-
-不要把 PAT 写进命令行参数、README、Issue、截图或 Pair Code。UsageMesh 不会把 GitHub Token 上传到仓库；为了后台定时同步，手工输入的凭据会保存在本机配置中，Unix 下文件权限为 `0600`。因此应使用**最小仓库权限 + 合理有效期**并保护本机系统账号。
+地址由实际 Fork 自动决定。例如账号为 `alice`、Fork 名仍为 `UsageMesh` 时，地址为 `https://alice.github.io/UsageMesh/`。如果 Fork 改名，使用 `usagemesh setup --repo OWNER/RENAMED_REPO` 初始化后，Dashboard 地址也会根据真实仓库名自动生成。
 
 ## 添加新设备
 
@@ -85,10 +93,11 @@ usagemesh invite
 
 把输出的完整 `usagemesh join '...'` 命令复制到新设备执行。Pair Code 包含工作区加密密钥和仓库信息，但**不包含 GitHub Token**，仍应把它当作敏感信息。
 
-完成后：
+新设备同样需要自己的 GitHub 写入凭据；可以使用 Fine-grained PAT，也可以使用已经登录的 GitHub CLI。`join` 成功后会完成首次全量同步，因此通常无需立刻再执行一次 `sync --full`。
+
+验证状态：
 
 ```bash
-usagemesh sync --full
 usagemesh status
 ```
 
@@ -129,6 +138,8 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 - Pair Code：不含 GitHub PAT，但含 workspace key，必须保密。
 - GitHub PAT：不上传，只在设备本地用于同步。
 - URL：不放 workspace key、PAT 或 Dashboard 密码。
+
+不要把 PAT 写进命令行、README、Issue、截图或 Pair Code。为了让后台定时同步无需人工输入，手工粘贴的 GitHub 凭据会保存在本机 UsageMesh 配置中；Unix 下配置文件权限为 `0600`。建议使用**最小仓库权限 + 合理有效期**，并保护本机系统账号。
 
 “绝对安全”无法由任何纯客户端工具保证，因此项目明确 Threat Model 和剩余风险，而不是做不现实的承诺。详见 [SECURITY.md](SECURITY.md)。
 
