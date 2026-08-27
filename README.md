@@ -150,6 +150,10 @@ npm run typecheck
 npm run build
 ```
 
+## 友情链接
+
+开源技术和开发者交流，欢迎访问 [Linux DO](https://linux.do/)。
+
 ## License and attribution
 
 MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
