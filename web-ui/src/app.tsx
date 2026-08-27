@@ -331,7 +331,7 @@ async function fetchMap(): Promise<{ map: CostMap | null; fetchedAt: number | nu
   }
 }
 
-const LEDGER_PRICING_SOURCE_URL = 'https://models.dev/api.json';
+const LEDGER_PRICING_SOURCE_URL = 'https://developers.openai.com/api/docs/models/gpt-5.6-sol';
 async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatus> {
   // Device-side pricing is the accounting source of truth. Repricing aggregated
   // rows in the browser can change cache/long-context semantics and drift from
@@ -346,7 +346,7 @@ async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatu
     else resolvedRows += 1;
   }
   return {
-    source: 'UsageMesh ledger · CC Switch compatible / models.dev',
+    source: 'UsageMesh ledger · OpenAI official cards / models.dev fallback',
     sourceUrl: LEDGER_PRICING_SOURCE_URL,
     updatedAt: null,
     fastMultiplier: 1.0,
@@ -573,28 +573,16 @@ function tierLabel(value: string | null | undefined): string {
 }
 
 function normalizedRoute(row: LedgerRow): { provider: string; type: string; label: string } {
-  const raw = String(row.provider || '').trim().toLowerCase();
   const provider = String(row.routeProvider || row.provider || 'unknown').trim().toLowerCase();
+  const type = String(row.routeType || 'unknown').trim().toLowerCase();
   const vendor = String(row.upstreamVendor || '').trim().toLowerCase();
-  let type = String(row.routeType || 'unknown').trim().toLowerCase();
-  let canonical = provider;
-
-  // Older ledgers sometimes carried `openai` as an unknown route when the Codex
-  // parser knew the first-party provider but route evidence had not yet been
-  // normalized. Do not rewrite explicit relay/cloud/aggregator evidence.
-  const firstPartyAliases: Record<string, string> = {
-    openai: 'openai', 'openai-codex': 'openai', anthropic: 'anthropic',
-    google: 'google', gemini: 'google', 'google-ai': 'google',
-    deepseek: 'deepseek', 'deepseek-ai': 'deepseek',
-  };
-  const firstParty = firstPartyAliases[provider] || firstPartyAliases[raw];
-  if (type === 'official' || ((type === 'unknown' || !type) && firstParty && (!vendor || vendor === firstParty))) {
-    type = 'official';
-    canonical = 'official';
-    const vendorLabel = (vendor || firstParty || '').replace(/^./, c => c.toUpperCase());
-    return { provider: canonical, type, label: vendorLabel ? `官方 · ${vendorLabel}` : '官方' };
+  if (type === 'official') {
+    const vendorLabel = vendor ? vendor.replace(/^./, c => c.toUpperCase()) : '';
+    return { provider: 'official', type: 'official', label: vendorLabel ? `官方 · ${vendorLabel}` : '官方' };
   }
-  return { provider: canonical || 'unknown', type: type || 'unknown', label: String(row.routeProvider || row.provider || '未知') };
+  // Never promote a raw provider name such as `openai` to official in the browser.
+  // Only the device-side local base-URL mapper may set routeType=official.
+  return { provider: provider || 'unknown', type: type || 'unknown', label: String(row.routeProvider || row.provider || '未知') };
 }
 
 function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
@@ -1025,7 +1013,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev，并对 CodeBuddy/WorkBuddy 等客户端的内部模型后缀（如 `-ioa`）做保守别名归一；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端优先采用模型厂商官方价格卡，其他模型再回退 models.dev；CodeBuddy/WorkBuddy 等客户端的内部模型后缀（如 `-ioa`）仅做保守查价别名。GPT-5.6 Sol 会按请求日期套用官方有效期价格：2026-08-21 起 Standard 为输入 $4.00、Cache Read $0.40、Cache Write $5.00、输出 $20.00；更早历史请求仍使用当时官方价格。明确标记为 Fast / Priority 的请求按官方 Fast API 价格卡计价，Standard 不会误乘 Fast 倍率；272K 以上输入的请求按官方长上下文规则处理。</p>
           <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>

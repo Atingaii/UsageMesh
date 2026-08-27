@@ -31,6 +31,9 @@ pub struct EffortPoint {
 pub struct EvidenceBundle {
     pub sessions: HashMap<(String, String), SessionEvidence>,
     pub provider_hints: HashMap<String, RouteHint>,
+    /// Client-wide route evidence derived locally from global settings/env. Values
+    /// contain only normalized labels/types; raw endpoint URLs are never retained.
+    pub client_route_hints: HashMap<String, RouteHint>,
     /// Request/session reasoning configuration recovered from local source logs.
     /// Keys are (client, session id). Values stay local until the selected label
     /// is copied into the encrypted request ledger.
@@ -455,6 +458,135 @@ fn register_effort(client: &str, path: &Path, value: &Value, bundle: &mut Eviden
     }
 }
 
+fn recursive_string_for_keys(value: &Value, keys: &[&str], depth: usize) -> Option<String> {
+    if depth > 8 {
+        return None;
+    }
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                let normalized = normalized_key(key);
+                if keys.contains(&normalized.as_str()) {
+                    if let Some(text) = child.as_str().filter(|value| !value.trim().is_empty()) {
+                        return Some(text.trim().to_string());
+                    }
+                }
+            }
+            object
+                .values()
+                .find_map(|child| recursive_string_for_keys(child, keys, depth + 1))
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(|child| recursive_string_for_keys(child, keys, depth + 1)),
+        _ => None,
+    }
+}
+
+fn register_route(client: &str, path: &Path, value: &Value, bundle: &mut EvidenceBundle) {
+    let Some(base_url) = recursive_string_for_keys(
+        value,
+        &[
+            "baseurl",
+            "apibase",
+            "apiurl",
+            "endpoint",
+            "apiendpoint",
+            "providerurl",
+            "modelendpoint",
+        ],
+        0,
+    ) else {
+        return;
+    };
+    if !base_url.contains('.') && !base_url.contains("localhost") {
+        return;
+    }
+    let provider = recursive_string_for_keys(
+        value,
+        &["provider", "providerid", "modelprovider", "providername"],
+        0,
+    )
+    .unwrap_or_else(|| "unknown".to_string());
+    let hint = route_hint_from_base_url(&provider, &base_url);
+
+    let mut ids = fallback_ids(path);
+    collect_session_ids(value, &mut ids, 0);
+    if ids.is_empty() {
+        if provider != "unknown" {
+            bundle
+                .provider_hints
+                .insert(provider.to_ascii_lowercase(), hint);
+        }
+        return;
+    }
+    for id in ids {
+        let entry = bundle.sessions.entry((client.to_string(), id)).or_default();
+        if provider != "unknown" {
+            entry.explicit_provider = Some(provider.clone());
+        }
+        entry.route_hint = Some(hint.clone());
+    }
+}
+
+fn route_hint_from_settings_value(value: &Value) -> Option<RouteHint> {
+    let base_url = recursive_string_for_keys(
+        value,
+        &[
+            "codebuddybaseurl",
+            "baseurl",
+            "apibase",
+            "apiurl",
+            "endpoint",
+            "apiendpoint",
+            "providerurl",
+            "modelendpoint",
+        ],
+        0,
+    )?;
+    if !base_url.contains('.') && !base_url.contains("localhost") {
+        return None;
+    }
+    let provider = recursive_string_for_keys(
+        value,
+        &["provider", "providerid", "modelprovider", "providername"],
+        0,
+    )
+    .unwrap_or_else(|| "unknown".to_string());
+    Some(route_hint_from_base_url(&provider, &base_url))
+}
+
+fn scan_codebuddy_global_route(home: &Path, bundle: &mut EvidenceBundle) {
+    // settings.local.json has higher precedence and therefore runs second.
+    for path in [
+        home.join(".codebuddy/settings.json"),
+        home.join(".codebuddy/settings.local.json"),
+    ] {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
+        if let Some(hint) = route_hint_from_settings_value(&value) {
+            bundle
+                .client_route_hints
+                .insert("codebuddy".to_string(), hint);
+        }
+    }
+
+    // Environment overrides file settings. Reduce it immediately to a route hint;
+    // do not copy CODEBUDDY_BASE_URL into the evidence bundle or ledger.
+    if let Ok(base_url) = std::env::var("CODEBUDDY_BASE_URL") {
+        if !base_url.trim().is_empty() {
+            bundle.client_route_hints.insert(
+                "codebuddy".to_string(),
+                route_hint_from_base_url("unknown", base_url.trim()),
+            );
+        }
+    }
+}
+
 fn parse_json_candidate(line: &str) -> Option<Value> {
     if let Ok(value) = serde_json::from_str::<Value>(line) {
         return Some(value);
@@ -483,6 +615,18 @@ fn scan_effort_file(client: &str, path: &Path, bundle: &mut EvidenceBundle) {
         if let Ok(bytes) = std::fs::read(path) {
             if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
                 register_effort(client, path, &value, bundle);
+                register_route(client, path, &value, bundle);
+            }
+        }
+        return;
+    }
+    if extension == "toml" {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            if let Ok(value) = raw.parse::<toml::Value>() {
+                if let Ok(json_value) = serde_json::to_value(value) {
+                    register_effort(client, path, &json_value, bundle);
+                    register_route(client, path, &json_value, bundle);
+                }
             }
         }
         return;
@@ -496,11 +640,22 @@ fn scan_effort_file(client: &str, path: &Path, bundle: &mut EvidenceBundle) {
             continue;
         }
         let lower = line.to_ascii_lowercase();
-        if !lower.contains("reasoning") && !lower.contains("thinking") {
+        let has_effort = lower.contains("reasoning") || lower.contains("thinking");
+        let has_route = lower.contains("base_url")
+            || lower.contains("baseurl")
+            || lower.contains("api_url")
+            || lower.contains("apiurl")
+            || lower.contains("endpoint");
+        if !has_effort && !has_route {
             continue;
         }
         if let Some(value) = parse_json_candidate(&line) {
-            register_effort(client, path, &value, bundle);
+            if has_effort {
+                register_effort(client, path, &value, bundle);
+            }
+            if has_route {
+                register_route(client, path, &value, bundle);
+            }
         }
     }
 }
@@ -512,7 +667,7 @@ fn is_text_evidence_file(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "json" | "jsonl" | "ndjson" | "log"
+        "json" | "jsonl" | "ndjson" | "log" | "toml"
     )
 }
 
@@ -562,6 +717,7 @@ pub fn scan(incremental: bool) -> EvidenceBundle {
         return bundle;
     };
     bundle.provider_hints = codex_provider_hints(&home);
+    scan_codebuddy_global_route(&home, &mut bundle);
 
     for root in [
         home.join(".codex/sessions"),
@@ -649,6 +805,38 @@ pub fn reasoning_effort_for_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codebuddy_settings_base_url_becomes_client_route_only() {
+        let value: Value = serde_json::json!({
+            "env": { "CODEBUDDY_BASE_URL": "https://api.openai.com/v1" }
+        });
+        let hint = route_hint_from_settings_value(&value).unwrap();
+        assert_eq!(hint.route_provider, "official");
+        assert_eq!(hint.route_type, "official");
+    }
+
+    #[test]
+    fn route_evidence_reduces_base_url_to_local_classification() {
+        let mut bundle = EvidenceBundle::default();
+        let value: Value = serde_json::json!({
+            "sessionId": "s-route",
+            "provider": "openai",
+            "baseUrl": "https://api.openai.com/v1"
+        });
+        register_route(
+            "codebuddy",
+            Path::new("/tmp/s-route.json"),
+            &value,
+            &mut bundle,
+        );
+        let evidence = bundle
+            .sessions
+            .get(&("codebuddy".to_string(), "s-route".to_string()))
+            .unwrap();
+        assert_eq!(evidence.route_hint.as_ref().unwrap().route_type, "official");
+        assert_eq!(evidence.explicit_provider.as_deref(), Some("openai"));
+    }
 
     #[test]
     fn effort_extractor_reads_common_shapes_without_guessing_content() {

@@ -110,7 +110,7 @@ fn priced_metrics_from_message(
     price_book: &PriceBook,
 ) -> (Metrics, bool) {
     let mut metrics = token_metrics_from_message(message);
-    let quote = price_book.quote(model, Some("standard"), &metrics);
+    let quote = price_book.quote_on_date(model, &message.date, Some("standard"), &metrics);
     metrics.cost_usd = quote.cost_usd;
     // Service tier is usage metadata, not a USD multiplier. A canonical Codex
     // fallback can therefore use the same API-equivalent price even when the
@@ -143,12 +143,15 @@ fn route_for_message(
         .and_then(|item| item.explicit_provider.as_ref())
         .is_some()
         || parser_provider_is_explicit(client, raw_provider);
-    let identity = provider::classify(
-        Some(raw_provider),
-        model,
-        explicit,
-        session_evidence.and_then(|item| item.route_hint.as_ref()),
-    );
+    let route_hint = session_evidence
+        .and_then(|item| item.route_hint.as_ref())
+        .or_else(|| {
+            evidence
+                .provider_hints
+                .get(&raw_provider.to_ascii_lowercase())
+        })
+        .or_else(|| evidence.client_route_hints.get(client));
+    let identity = provider::classify(Some(raw_provider), model, explicit, route_hint);
     (normalize_text(raw_provider, "unknown"), identity)
 }
 
@@ -283,12 +286,12 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             route_hint,
         );
         let mut metrics = enhanced.metrics;
-        let quote = price_book.quote(&model, Some(&enhanced.tier), &metrics);
+        let quote =
+            price_book.quote_on_date(&model, &enhanced.date, Some(&enhanced.tier), &metrics);
         metrics.cost_usd = quote.cost_usd;
         // If Codex did not record cache-write separately, the normalized fresh
-        // input can contain some cache creation. CC Switch charges GPT-5.6 cache
-        // creation at 1.25x input, so the result is explicitly marked as a lower
-        // bound rather than pretending to be exact.
+        // input can contain cache creation. GPT-5.6 official API docs bill cache
+        // writes at 1.25x uncached input, so this remains a lower bound.
         let missing_cache_write_evidence = !enhanced.cache_write_known && metrics.input > 0;
         let cost_lower_bound = quote.lower_bound || missing_cache_write_evidence;
         request_details.push(RequestDetail {

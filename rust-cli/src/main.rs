@@ -459,7 +459,7 @@ fn status() -> Result<()> {
         println!("Last scan: {}", ledger.generated_at);
         println!("Tokens: {}", ledger.totals.total_tokens());
         println!(
-            "Subscription-equivalent cost: ${:.2}",
+            "API-equivalent estimated cost: ${:.2}",
             ledger.totals.cost_usd
         );
         if !ledger.pricing.source.is_empty() {

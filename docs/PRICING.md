@@ -1,29 +1,39 @@
 # Cost semantics
 
-UsageMesh reports an **estimated API-equivalent USD cost** so totals on the hosted Dashboard can be compared directly with the same device-side unified ledger. It is an estimate, not a provider invoice and not a guarantee of subscription quota accounting.
+UsageMesh reports an **estimated API-equivalent USD cost**. It is an estimate, not a provider invoice and not a subscription-quota meter.
 
-## Source of truth
+## Source of truth and precedence
 
-Token parsing, cache buckets and request boundaries are resolved on the device before encryption. The device-side pricing adapter uses the public `models.dev` catalog for general models and guarded GPT-5.6 rates where the project needs a stable audited card. The hosted Dashboard does **not** re-price aggregated rows in the browser; it displays the cost already calculated on the device.
+Token parsing, cache buckets, request boundaries and route evidence are resolved on the device before encryption. Pricing precedence is:
 
-For GPT-5.6 Sol the guarded base card per 1M tokens is: fresh input **$5.00**, cache read **$0.50**, cache write **$6.25**, output/reasoning output **$30.00**.
+1. **Official upstream model price cards** when UsageMesh has an audited rule for the model family.
+2. `models.dev` as the general-model fallback.
+3. A lower-bound marker (`≥`) when a bucket/model cannot be priced reliably.
+
+The hosted Dashboard never re-prices aggregate rows in the browser; it displays the request/device-side cost already written into the encrypted ledger.
+
+For GPT-5.6, UsageMesh follows the official OpenAI model documentation and effective dates. GPT-5.6 Sol Standard requests on/after **2026-08-21** use **$4.00 input / $0.40 cached input / $20.00 output per 1M tokens**. Cache writes are **1.25x uncached input**, therefore **$5.00/1M** at that Sol rate. Requests before that effective date keep the prior official **$5.00 / $0.50 / $30.00** card and **$6.25/1M** cache-write rate. Terra/Luna's 2026-07-30 repricing is handled the same way.
+
+Official reference: https://developers.openai.com/api/docs/models/gpt-5.6-sol
 
 ## Speed tier
 
-`Standard`, `Fast` and `Priority` are usage metadata. They are useful for understanding subscription speed/quota behavior, but UsageMesh does **not** multiply the USD estimate by 2.5× simply because a request is Fast/Priority. A speed/quota multiplier is a different metric from API-equivalent monetary cost and must not be mixed into the dollar total.
+UsageMesh never guesses Fast from model name or performance. `Standard`, `Fast` and `Priority` come from local request evidence. A Standard request uses the Standard card. Explicit API `Fast`/`Priority` requests use the official Fast API price card; they are not given the old blanket 2.5x multiplier.
 
-## Long context and unknown prices
+GPT-5.6 requests above 272K input tokens use OpenAI's documented long-context rule for the full request (2x input-side and 1.5x output-side pricing).
 
-Long-context rules are applied from request-level evidence where supported. When a model, route or cache-write bucket cannot be priced confidently, UsageMesh marks the estimate as a lower bound instead of inventing a precise value.
+## Route / official-provider classification
 
+`official` is not inferred merely because a parser says `provider=openai` or `provider=anthropic`. UsageMesh attempts to read the request/base endpoint locally. It parses the hostname and immediately reduces it to a non-sensitive route classification such as `official`, `openrouter`, `azure-openai`, `aws-bedrock`, `local`, or `custom-relay`.
+
+**The raw base URL is never written into the UsageMesh ledger, pair code, index, or GitHub repository.** Only the normalized route label/type can leave the machine. Host matching is boundary-aware, so a lookalike domain such as `api.openai.com.evil.example` is not accepted as official.
+
+If a client does not expose a usable endpoint locally, UsageMesh leaves the route unverified/unknown rather than falsely claiming it is official.
 
 ## Pricing-policy migration
 
-A pricing-policy change invalidates historical stored `costUsd` values. UsageMesh compares the cached ledger's pricing policy identifier with the running CLI. On the first sync after an accounting-policy upgrade, it automatically performs a full local rescan/reprice before publishing the encrypted ledger. This prevents a two-day incremental merge from leaving older dates on a previous cost policy.
-
+A pricing-policy change invalidates historical stored `costUsd` values. On the first sync after an accounting-policy upgrade, UsageMesh automatically performs a full local rescan/reprice before publishing the encrypted ledger. This prevents old dates from retaining a previous price card.
 
 ## Client model aliases
 
-Some coding clients expose an internal route/model suffix instead of the canonical upstream model ID. UsageMesh first attempts an exact models.dev lookup, then applies conservative lookup-only aliases. In particular, CodeBuddy/WorkBuddy IDs ending in `-ioa` (for example `deepseek-v4-flash-ioa`) fall back to the canonical model ID (`deepseek-v4-flash`) only when the exact ID is absent. Six- and eight-digit release suffixes are handled the same way. Unknown models remain lower bounds rather than being guessed.
-
-The Dashboard prefixes a filtered total with `≥` whenever any included row is still a lower-bound estimate, so an incomplete price catalog cannot look like an exact total.
+Some coding clients expose internal model suffixes. Exact model IDs are attempted first; conservative lookup-only aliases are used only as fallback. For example, `deepseek-v4-flash-ioa` may fall back to `deepseek-v4-flash` when the exact ID is absent. Unknown models remain lower bounds rather than being guessed.

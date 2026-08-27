@@ -104,43 +104,86 @@ fn official_identity(upstream_vendor: String) -> ProviderIdentity {
     }
 }
 
+fn parsed_host(base_url: &str) -> Option<String> {
+    let raw = base_url.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(raw)
+        .or_else(|_| reqwest::Url::parse(&format!("https://{raw}")))
+        .ok()?;
+    parsed
+        .host_str()
+        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+}
+
+fn host_is(host: &str, domain: &str) -> bool {
+    host == domain || host.ends_with(&format!(".{domain}"))
+}
+
+fn official_vendor_for_host(host: &str) -> Option<&'static str> {
+    if host_is(host, "openai.com") || host_is(host, "chatgpt.com") {
+        return Some("openai");
+    }
+    if host_is(host, "anthropic.com") {
+        return Some("anthropic");
+    }
+    if host == "generativelanguage.googleapis.com" {
+        return Some("google");
+    }
+    if host_is(host, "deepseek.com") {
+        return Some("deepseek");
+    }
+    if host_is(host, "x.ai") {
+        return Some("xai");
+    }
+    if host_is(host, "mistral.ai") {
+        return Some("mistral");
+    }
+    if host_is(host, "moonshot.ai") || host_is(host, "moonshot.cn") {
+        return Some("moonshotai");
+    }
+    None
+}
+
 pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint {
     let id = norm(provider_id);
-    let url = base_url.trim().to_ascii_lowercase();
-    if url.contains("api.openai.com")
-        || url.contains("api.anthropic.com")
-        || url.contains("generativelanguage.googleapis.com")
-    {
+    let host = parsed_host(base_url).unwrap_or_default();
+
+    // Domain checks are host-aware so values such as `api.openai.com.evil.example`
+    // cannot be mistaken for an official endpoint. Only the normalized result is
+    // retained; the raw URL remains local and is never written into the ledger.
+    if official_vendor_for_host(&host).is_some() {
         return RouteHint {
             route_provider: "official".into(),
             route_type: "official".into(),
         };
     }
-    if url.contains("openai.azure.com") || url.contains("azure.com/openai") {
+    if host.contains("openai.azure.com") || host_is(&host, "azure.com") {
         return RouteHint {
             route_provider: "azure-openai".into(),
             route_type: "cloud".into(),
         };
     }
-    if url.contains("bedrock") || url.contains("amazonaws.com") {
+    if host.contains("bedrock") || host_is(&host, "amazonaws.com") {
         return RouteHint {
             route_provider: "aws-bedrock".into(),
             route_type: "cloud".into(),
         };
     }
-    if url.contains("aiplatform.googleapis.com") || url.contains("vertex") {
+    if host == "aiplatform.googleapis.com" || host.contains("vertex") {
         return RouteHint {
             route_provider: "google-vertex".into(),
             route_type: "cloud".into(),
         };
     }
-    if url.contains("openrouter.ai") {
+    if host_is(&host, "openrouter.ai") {
         return RouteHint {
             route_provider: "openrouter".into(),
             route_type: "aggregator".into(),
         };
     }
-    if url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0") {
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "0.0.0.0" | "::1") {
         return RouteHint {
             route_provider: "local".into(),
             route_type: "self-hosted".into(),
@@ -154,10 +197,9 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
             route_type: classified.route_type,
         };
     }
-    // A non-official custom base URL is strong evidence of a relay even when the
-    // provider key itself is simply named `openai` or `anthropic`.
     RouteHint {
-        route_provider: if id.is_empty() || official_provider_name(&id).is_some() {
+        route_provider: if id.is_empty() || id == "unknown" || official_provider_name(&id).is_some()
+        {
             "custom-relay".into()
         } else {
             id
@@ -167,8 +209,8 @@ pub fn route_hint_from_base_url(provider_id: &str, base_url: &str) -> RouteHint 
 }
 
 /// Classify a route conservatively. A route hint obtained from an explicit base
-/// URL wins. Otherwise first-party `official` is used only when the source
-/// session itself explicitly named that provider.
+/// URL wins. A provider name alone never proves a first-party route; `official`
+/// requires locally observed endpoint-domain evidence.
 pub fn classify(
     raw_provider: Option<&str>,
     model: &str,
@@ -283,8 +325,14 @@ pub fn classify(
         };
     }
     if explicit {
+        // Provider labels identify an implementation/vendor, not the network path.
+        // Do not claim `official` unless a locally observed base URL produced a hint.
         if official_provider_name(&raw).is_some() {
-            return official_identity(upstream_vendor);
+            return ProviderIdentity {
+                upstream_vendor,
+                route_provider: raw,
+                route_type: "unknown".into(),
+            };
         }
         return ProviderIdentity {
             upstream_vendor,
@@ -319,16 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn proven_first_party_route_uses_one_official_bucket() {
+    fn provider_name_alone_does_not_prove_official_route() {
         let openai = classify(Some("openai"), "gpt-5.6-sol", true, None);
         assert_eq!(openai.upstream_vendor, "openai");
-        assert_eq!(openai.route_provider, "official");
-        assert_eq!(openai.route_type, "official");
-
-        let anthropic = classify(Some("anthropic"), "claude-sonnet-4", true, None);
-        assert_eq!(anthropic.upstream_vendor, "anthropic");
-        assert_eq!(anthropic.route_provider, "official");
-        assert_eq!(anthropic.route_type, "official");
+        assert_eq!(openai.route_provider, "openai");
+        assert_eq!(openai.route_type, "unknown");
     }
 
     #[test]
@@ -344,6 +387,12 @@ mod tests {
         let identity = classify(Some("openai"), "gpt-5.6-sol", true, Some(&hint));
         assert_eq!(identity.route_provider, "official");
         assert_eq!(identity.route_type, "official");
+    }
+
+    #[test]
+    fn lookalike_domain_is_not_official() {
+        let hint = route_hint_from_base_url("openai", "https://api.openai.com.evil.example/v1");
+        assert_eq!(hint.route_type, "relay");
     }
 
     #[test]

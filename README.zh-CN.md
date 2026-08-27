@@ -165,7 +165,7 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 ## 费用口径
 
-Dashboard 展示的是**API 等价美元费用估算**，不是供应商发票，也不把 Fast / Priority 的订阅额度倍率混入美元费用。计费策略版本变化时，设备下一次同步会自动执行一次全量历史重算，避免旧账本日期继续保留旧费用。CodeBuddy/WorkBuddy 这类客户端的内部模型后缀（例如 `deepseek-v4-flash-ioa`）会在精确匹配失败后映射到对应的 canonical 模型；仍无法可靠计价的记录会让总费用显示 `≥`，不会伪装成精确值。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
+Dashboard 展示的是**API 等价美元费用估算**，优先采用模型厂商官方价格卡并按生效日期重算历史；通用模型再回退 `models.dev`。例如 GPT-5.6 Sol 在 2026-08-21 起使用 OpenAI 当前官方促销价，旧日期仍保留当时的官方价格。Standard 不会误乘 Fast 倍率，只有本地请求证据明确为 Fast/Priority 时才使用对应官方 Fast API 价格。路由的“官方”标签也只由设备端读取到的 base URL/endpoint 域名本地判定，**原始 URL 不上传 GitHub**，只上传 `official/openrouter/relay/...` 这类归一化标签。具体规则见 [docs/PRICING.md](docs/PRICING.md)。
 
 ## 友情链接
 

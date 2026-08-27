@@ -20,7 +20,10 @@ use serde::Deserialize;
 use crate::model::{Metrics, PricingInfo};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
-pub const PRICING_POLICY: &str = "api-equivalent-estimate-v3";
+const OPENAI_GPT56_SOL_URL: &str = "https://developers.openai.com/api/docs/models/gpt-5.6-sol";
+pub const PRICING_POLICY: &str = "official-time-aware-api-estimate-v4";
+const GPT56_SOL_PROMO_EFFECTIVE: &str = "2026-08-21";
+const GPT56_TERRA_LUNA_REPRICE_EFFECTIVE: &str = "2026-07-30";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
 const GPT56_LONG_INPUT_MULTIPLIER: f64 = 2.0;
@@ -279,18 +282,18 @@ impl PriceBook {
     pub fn metadata(&self) -> PricingInfo {
         PricingInfo {
             policy: PRICING_POLICY.to_string(),
-            source: format!("CC Switch compatible · {}", self.catalog_state),
-            source_url: MODELS_DEV_URL.to_string(),
-            compatibility: "GPT-5.6 guarded base rates; speed tier is recorded separately and does not multiply USD cost"
+            source: format!("OpenAI official GPT-5.6 cards + models.dev fallback · {}", self.catalog_state),
+            source_url: OPENAI_GPT56_SOL_URL.to_string(),
+            compatibility: "GPT-5.6 pricing is effective-date aware; explicit Fast/Priority uses the official API Fast card; unknown models fall back conservatively"
                 .to_string(),
         }
     }
 
-    fn lookup(&self, model_id: &str) -> Option<EffectivePricing> {
+    fn lookup(&self, model_id: &str, date: &str, tier: Option<&str>) -> Option<EffectivePricing> {
         let normalized = normalize_model_id(model_id);
         for alias in lookup_aliases(&normalized) {
-            if let Some(guarded) = guarded_pricing(&alias) {
-                return Some(guarded);
+            if let Some(official) = guarded_pricing(&alias, date, tier) {
+                return Some(official);
             }
             if let Some(pricing) = self.catalog.get(&alias) {
                 return Some(*pricing);
@@ -299,8 +302,18 @@ impl PriceBook {
         None
     }
 
-    pub fn quote(&self, model_id: &str, _tier: Option<&str>, metrics: &Metrics) -> PriceQuote {
-        let Some(mut pricing) = self.lookup(model_id) else {
+    pub fn quote(&self, model_id: &str, tier: Option<&str>, metrics: &Metrics) -> PriceQuote {
+        self.quote_on_date(model_id, "9999-12-31", tier, metrics)
+    }
+
+    pub fn quote_on_date(
+        &self,
+        model_id: &str,
+        date: &str,
+        tier: Option<&str>,
+        metrics: &Metrics,
+    ) -> PriceQuote {
+        let Some(pricing) = self.lookup(model_id, date, tier) else {
             return PriceQuote {
                 cost_usd: 0.0,
                 lower_bound: true,
@@ -346,21 +359,40 @@ impl PriceBook {
     }
 }
 
-/// Guarded GPT-5.6 API-equivalent base prices. Values are USD/token;
-/// base card per MTok: Sol 5 / 30 / 0.50 / 6.25, Terra 2 / 12 / 0.20 / 2.50,
-/// Luna 0.20 / 1.20 / 0.02 / 0.25. Speed tier is tracked separately.
-fn guarded_pricing(model_id: &str) -> Option<EffectivePricing> {
+/// GPT-5.6 official API price schedule, USD/token.
+/// Sources: OpenAI model docs / pricing announcements. The Aug-21 Sol promotion
+/// and Jul-30 Terra/Luna repricing are applied by request date. Cache writes are
+/// 1.25x uncached input. Explicit Fast/Priority uses the official Fast API card
+/// (2x the short-context Standard card); >272K input then applies 2x input-side
+/// and 1.5x output to the full request.
+fn guarded_pricing(model_id: &str, date: &str, tier: Option<&str>) -> Option<EffectivePricing> {
     let normalized = match model_id {
         "gpt-5.6" | "gpt-5.6-low" | "gpt-5.6-medium" | "gpt-5.6-high" | "gpt-5.6-xhigh"
-        | "gpt-5.6-minimal" => "gpt-5.6-sol",
+        | "gpt-5.6-minimal" | "gpt-5.6-max" => "gpt-5.6-sol",
         other => other,
     };
-    let (input, output, cache_read, cache_write) = match normalized {
-        "gpt-5.6-sol" => (5e-6, 30e-6, 0.5e-6, 6.25e-6),
-        "gpt-5.6-terra" => (2e-6, 12e-6, 0.2e-6, 2.5e-6),
-        "gpt-5.6-luna" => (0.2e-6, 1.2e-6, 0.02e-6, 0.25e-6),
+    let observed_date = if date.len() >= 10 { date } else { "9999-12-31" };
+    let (input_mtok, cached_mtok, output_mtok) = match normalized {
+        "gpt-5.6-sol" if observed_date >= GPT56_SOL_PROMO_EFFECTIVE => (4.0, 0.4, 20.0),
+        "gpt-5.6-sol" => (5.0, 0.5, 30.0),
+        "gpt-5.6-terra" if observed_date >= GPT56_TERRA_LUNA_REPRICE_EFFECTIVE => (2.0, 0.2, 12.0),
+        "gpt-5.6-terra" => (2.5, 0.25, 15.0),
+        "gpt-5.6-luna" if observed_date >= GPT56_TERRA_LUNA_REPRICE_EFFECTIVE => (0.2, 0.02, 1.2),
+        "gpt-5.6-luna" => (1.0, 0.1, 6.0),
         _ => return None,
     };
+    let fast = matches!(
+        tier.unwrap_or("standard")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "fast" | "priority"
+    );
+    let speed_multiplier = if fast { 2.0 } else { 1.0 };
+    let input = input_mtok * speed_multiplier / 1_000_000.0;
+    let cache_read = cached_mtok * speed_multiplier / 1_000_000.0;
+    let output = output_mtok * speed_multiplier / 1_000_000.0;
+    let cache_write = input * 1.25;
     Some(EffectivePricing {
         input,
         output,
@@ -387,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt56_sol_uses_guarded_base_card() {
+    fn gpt56_sol_uses_current_official_promotional_card() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -397,12 +429,28 @@ mod tests {
             Some("standard"),
             &metrics(100_000, 50_000, 10_000, 10_000),
         );
+        assert!((quote.cost_usd - 0.67).abs() < 1e-9);
+        assert!(!quote.lower_bound);
+    }
+
+    #[test]
+    fn gpt56_sol_preserves_pre_aug21_historical_price() {
+        let book = PriceBook {
+            catalog: HashMap::new(),
+            catalog_state: "test",
+        };
+        let quote = book.quote_on_date(
+            "gpt-5.6-sol",
+            "2026-08-20",
+            Some("standard"),
+            &metrics(100_000, 50_000, 10_000, 10_000),
+        );
         assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
     #[test]
-    fn gpt56_fast_keeps_base_usd_card() {
+    fn gpt56_fast_uses_official_fast_api_card() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -412,7 +460,7 @@ mod tests {
             Some("fast"),
             &metrics(100_000, 50_000, 10_000, 10_000),
         );
-        assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
+        assert!((quote.cost_usd - 1.34).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 
@@ -427,7 +475,7 @@ mod tests {
             Some("standard"),
             &metrics(280_000, 10_000, 0, 10_000),
         );
-        let expected = 280_000.0 * 5e-6 * 2.0 + 10_000.0 * 0.5e-6 * 2.0 + 10_000.0 * 30e-6 * 1.5;
+        let expected = 280_000.0 * 4e-6 * 2.0 + 10_000.0 * 0.4e-6 * 2.0 + 10_000.0 * 20e-6 * 1.5;
         assert!((quote.cost_usd - expected).abs() < 1e-9);
     }
 
