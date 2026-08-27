@@ -363,36 +363,6 @@ const ACCESS_BRANCH = 'um-dashboard';
 const DEVICE_INDEX_BRANCH = 'um-index';
 const ACCESS_AAD_PREFIX = 'usagemesh-dashboard-access-v1:';
 const LEDGER_AAD_PREFIX = 'usagemesh-ledger-v2:';
-const REMEMBERED_WORKSPACE_KEY_PREFIX = 'usagemesh:remembered-workspace-key:v1:';
-
-function rememberedWorkspaceStorageKey(repo: string): string {
-  return `${REMEMBERED_WORKSPACE_KEY_PREFIX}${repo.toLowerCase()}`;
-}
-
-function readRememberedWorkspaceKey(repo: string): string {
-  try {
-    return sessionStorage.getItem(rememberedWorkspaceStorageKey(repo)) || '';
-  } catch {
-    return '';
-  }
-}
-
-function rememberWorkspaceKey(repo: string, encodedKey: string) {
-  try {
-    sessionStorage.setItem(rememberedWorkspaceStorageKey(repo), encodedKey);
-  } catch {
-    // Storage may be unavailable in private browsing; normal password unlock still works.
-  }
-}
-
-function forgetRememberedWorkspaceKey(repo: string) {
-  try {
-    sessionStorage.removeItem(rememberedWorkspaceStorageKey(repo));
-  } catch {
-    // Best-effort local logout.
-  }
-}
-
 interface AccessEnvelope {
   schemaVersion: number;
   kind: string;
@@ -499,6 +469,11 @@ async function workspaceKey(repo: string, password: string): Promise<string> {
     envelope.kdf !== 'PBKDF2-HMAC-SHA256' ||
     envelope.algorithm !== 'AES-256-GCM'
   ) throw new Error('Dashboard 访问配置不受支持');
+  // v1 envelopes are iteration-driven: existing 310k manifests remain valid,
+  // while new/changed passwords use the stronger device-side default.
+  if (!Number.isInteger(envelope.iterations) || envelope.iterations < 100_000 || envelope.iterations > 5_000_000) {
+    throw new Error('Dashboard 访问配置的 KDF 参数无效');
+  }
 
   const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
   const key = await crypto.subtle.deriveKey(
@@ -805,7 +780,7 @@ const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock, error }) => {
     e.preventDefault();
     if (!password || loading) return;
     setLoading(true);
-    try { await onUnlock(password); } finally { setLoading(false); }
+    try { await onUnlock(password); setPassword(''); } finally { setLoading(false); }
   };
 
   return (
@@ -823,9 +798,9 @@ const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock, error }) => {
             <div className="w-9 h-9 rounded-full bg-[var(--accent-blue-light)] border border-[var(--accent-blue-border)] flex items-center justify-center text-[var(--accent-blue)]"><Lock className="w-4 h-4" /></div>
           </div>
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-primary)] mb-1">打开 UsageMesh</h2>
-          <p className="text-xs text-[var(--text-muted)] leading-relaxed mb-6">输入 Dashboard 密码。密码只在当前页面参与 PBKDF2 + AES-GCM 解密，不会发送给 GitHub，也不会出现在网址中。</p>
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed mb-6">输入原来的 Dashboard 密码即可。密码只在当前页面参与 PBKDF2 + AES-GCM 解密；解密后的工作区密钥只保留在页面内存，刷新或关闭页面后需要重新输入密码。</p>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div><label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">Dashboard Password</label><div className="relative"><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入 Dashboard 密码" className="w-full bg-[var(--bg-main)] text-[var(--text-primary)] text-sm border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-[var(--accent-blue)] transition font-mono pr-10" autoFocus /><KeyRound className="absolute right-3 top-3 w-4 h-4 text-[var(--text-muted)]" /></div></div>
+            <div><label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">Dashboard Password</label><div className="relative"><input type="password" autoComplete="current-password" spellCheck={false} autoCapitalize="none" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入 Dashboard 密码" className="w-full bg-[var(--bg-main)] text-[var(--text-primary)] text-sm border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-[var(--accent-blue)] transition font-mono pr-10" autoFocus /><KeyRound className="absolute right-3 top-3 w-4 h-4 text-[var(--text-muted)]" /></div></div>
             {error && <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs"><ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" /><div><div className="font-semibold">{error}</div><div className="text-[11px] opacity-90 mt-0.5">{error.includes('密码') ? '请确认输入的是设备端 usagemesh password 设置的密码。' : '页面只读取公开仓库中的加密快照；请稍后刷新或检查设备是否完成同步。'}</div></div></div>}
             <button type="submit" disabled={loading || password.length < 8} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent-blue)] text-white text-sm font-medium hover:bg-blue-600 active:scale-[0.99] transition cursor-pointer disabled:opacity-50 shadow-sm">{loading ? <><RefreshCw className="w-4 h-4 animate-spin" /><span>正在解密并读取数据…</span></> : <><span>进入 Dashboard</span><ArrowRight className="w-4 h-4" /></>}</button>
           </form>
@@ -1344,7 +1319,6 @@ function devices(records: UsageRecord[]): DeviceInfo[] {
 function App() {
   const [dataset, setDataset] = useState<DashboardDataset | null>(null);
   const [workspaceKeyValue, setWorkspaceKeyValue] = useState('');
-  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('usagemesh:theme') === 'dark');
@@ -1371,39 +1345,11 @@ function App() {
     }, 10_000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [workspaceKeyValue]);
-  useEffect(() => {
-    let cancelled = false;
-    const repo = repoFromLocation();
-    const remembered = readRememberedWorkspaceKey(repo);
-    if (!remembered) {
-      setIsRestoringSession(false);
-      return () => { cancelled = true; };
-    }
-
-    setSyncStatus('syncing');
-    loadDashboardWithKey(repo, remembered)
-      .then(next => {
-        if (cancelled) return;
-        setDataset(next);
-        setWorkspaceKeyValue(remembered);
-        setSyncStatus('synced');
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setUnlockError('已保存的登录态无法恢复，请重新输入 Dashboard 密码');
-        setSyncStatus('error');
-      })
-      .finally(() => {
-        if (!cancelled) setIsRestoringSession(false);
-      });
-    return () => { cancelled = true; };
-  }, []);
 
   const unlock = async (nextPassword: string) => {
     setUnlockError(null); setSyncStatus('syncing');
     try {
       const { dataset: next, key } = await unlockDashboard(nextPassword);
-      rememberWorkspaceKey(next.repo, key);
       setDataset(next);
       setWorkspaceKeyValue(key);
       setSyncStatus('synced');
@@ -1417,7 +1363,6 @@ function App() {
     catch { setSyncStatus('error'); }
   };
   const lock = () => {
-    forgetRememberedWorkspaceKey(repoFromLocation());
     setDataset(null);
     setWorkspaceKeyValue('');
     setUnlockError(null);
@@ -1465,7 +1410,6 @@ function App() {
   const title = activeTab==='overview'?'概览':activeTab==='analytics'?'用量分析':activeTab==='devices'?'设备':'聚合数据';
   const lastSync = dataset?.lastSync ? new Date(dataset.lastSync).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
 
-  if (!dataset && isRestoringSession) return <div className={isDarkMode ? 'dark' : ''}><div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-primary)] grid place-items-center"><div className="flex items-center gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] px-4 py-3 text-xs text-[var(--text-muted)] shadow-sm"><RefreshCw className="h-4 w-4 animate-spin text-[var(--accent-blue)]" /><span>正在恢复登录...</span></div></div></div>;
   if (!dataset) return <div className={isDarkMode ? 'dark' : ''}><UnlockScreen onUnlock={unlock} error={unlockError} /></div>;
 
   return <div className={`flex h-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-primary)] ${isDarkMode ? 'dark' : ''}`}>

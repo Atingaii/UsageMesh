@@ -73,7 +73,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **30-second cadence** unless you pass `--no-schedule`.
+`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **30-second cadence** unless you pass `--no-schedule`. New dashboard passwords must be at least 12 characters/bytes; existing workspaces keep their existing password unchanged across upgrades.
 
 A full sync also synchronizes the fork's `main` branch with the current `Atingaii/UsageMesh` upstream before publishing usage data. This is the automatic repair path for users who forked an older version: they do not need to click GitHub's **Sync fork** button manually.
 
@@ -89,11 +89,11 @@ The URL is derived from the actual fork. For example, if the GitHub account is `
 
 ## Zero-touch updates
 
-Starting with **UsageMesh v2.0.2**, normal synchronization is also the update mechanism. Every `usagemesh sync` — including the scheduler-created background sync — checks the latest **stable** GitHub Release. If a newer version exists, UsageMesh downloads the platform-specific release archive and its SHA-256 checksum, verifies it, synchronizes the workspace fork with the current upstream, replaces the CLI in place, and resumes synchronization automatically.
+Starting with **UsageMesh v2.0.2**, normal synchronization is also the update mechanism. Every scheduler-created `usagemesh sync` can discover the latest **stable** GitHub Release. If a newer version exists, UsageMesh downloads the platform-specific release archive and its SHA-256 checksum, verifies it, synchronizes the workspace fork with the current upstream, replaces the CLI in place, and resumes synchronization automatically.
 
-The important part for users is that upgrades do **not** recreate the workspace. The repository, workspace key, dashboard password, device identity and configured sync interval stay unchanged. A 15-minute device remains a 15-minute device; a 60-minute device remains a 60-minute device. Users configure UsageMesh once and normally never need to run `setup` again.
+Upgrades do **not** recreate the workspace or reset credentials. The repository, workspace key, dashboard password, device identity and GitHub credential remain unchanged. Current scheduled installations use the product's standard **30-second near-real-time cadence**; devices intentionally configured with `--no-schedule` remain manual.
 
-Stable releases are only promoted to `latest` after the six supported platform builds and installer smoke tests pass. Failed candidates remain prereleases and are therefore ignored by automatic updates.
+Stable releases are only promoted to `latest` after the supported platform builds and installer smoke tests pass. Failed candidates remain prereleases and are therefore ignored by automatic updates.
 
 Automatic updates can be disabled for controlled environments with `USAGEMESH_AUTO_UPDATE=0`. Re-running the original installer remains a recovery option; on an already configured machine the installer detects the workspace and performs the full refresh automatically, without requiring a second command.
 
@@ -144,21 +144,23 @@ Dashboard assets use relative URLs, so a renamed fork does not depend on a hard-
 
 **Overview** is intentionally concise: total usage, equivalent cost, trend, current devices and recent activity.
 
-**Analysis** is a diagnostic workbench rather than a duplicate overview. It includes a near-real-time request feed with exact request time, model, speed/tier, reasoning effort when available, token buckets, duration when the source records it, and per-request estimated cost, plus cache efficiency, concentration, contribution dimensions, a device × model matrix, and high-consumption combinations.
+**Analysis** is a diagnostic workbench rather than a duplicate overview. It includes a near-real-time request feed with exact event time, model, speed/tier, token buckets, duration when the source records it, per-request estimated cost, and **reasoning/thinking effort when the source client explicitly records it**. UsageMesh recognizes common `reasoningEffort`, nested `reasoning.effort`, `thinkingLevel` and thinking/reasoning budget shapes across text-based client logs. It does not infer effort from model names or token counts, so clients that do not expose the field correctly remain `—` instead of receiving a guessed value.
 
 ## What is uploaded
 
 Each device publishes an encrypted snapshot to an isolated `um-ledger-*` branch. A small `um-index` branch lists device snapshot branch names. Dashboard password material is a password-wrapped workspace key on `um-dashboard`.
 
-UsageMesh is not designed to upload raw prompts, responses, reasoning text, source code, project content, full session transcripts, API keys or GitHub credentials.
+UsageMesh is not designed to upload raw prompts, responses, reasoning text, source code, project content, full session transcripts, API keys or GitHub credentials. Request-level metadata is inside the encrypted ledger.
 
 ## Security model
 
-The dashboard password itself is never stored in the browser. After unlock, the decrypted workspace key is kept only in `sessionStorage`: normal refreshes stay unlocked, while closing the browser session requires the password again. See [SECURITY.md](SECURITY.md) for the threat model and limitations.
+The dashboard password itself is never stored in the browser. After unlock, the decrypted workspace key is kept only in the current page's memory — **not** in `localStorage`, `sessionStorage`, IndexedDB, cookies or the URL. Refreshing or closing the page requires the same password again.
+
+Existing v1 password manifests remain backward compatible: a workspace created with the earlier 310,000-iteration PBKDF2 setting still unlocks with its original password. Newly created or explicitly changed passwords use PBKDF2-HMAC-SHA256 with **600,000 iterations**, a random salt and AES-256-GCM wrapping. The static dashboard also ships a restrictive Content Security Policy and does not load third-party JavaScript or analytics. See [SECURITY.md](SECURITY.md) for the complete threat model.
 
 A pasted GitHub credential is stored only in the local UsageMesh configuration so scheduled sync can run non-interactively; Unix configuration files are mode `0600`. Use a short-lived, repository-scoped token and protect the operating-system account itself.
 
-No client-side system can promise “absolute security.” UsageMesh instead minimizes privilege, encrypts data before upload, avoids secrets in URLs, and documents the remaining trust boundaries explicitly.
+No client-side system can promise “absolute security.” UsageMesh instead minimizes privilege, encrypts data before upload, avoids persistent browser decryption keys and URL secrets, restricts the browser network surface, and documents the remaining trust boundaries explicitly.
 
 ## Cost semantics
 

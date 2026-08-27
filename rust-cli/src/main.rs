@@ -125,8 +125,8 @@ fn resolve_token(explicit: Option<String>) -> Result<String> {
 
 fn validate_dashboard_password(password: &str) -> Result<String> {
     let password = password.trim().to_string();
-    if password.as_bytes().len() < 8 {
-        bail!("dashboard password must be at least 8 bytes long")
+    if password.as_bytes().len() < 12 {
+        bail!("dashboard password must be at least 12 bytes long")
     }
     if password.as_bytes().len() > 256 {
         bail!("dashboard password is unexpectedly long")
@@ -145,7 +145,7 @@ fn resolve_dashboard_password(explicit: Option<String>) -> Result<String> {
     }
 
     println!("Create a dashboard password (same password works from any browser).");
-    let first = rpassword::prompt_password("Dashboard password (hidden, min 8 chars): ")?;
+    let first = rpassword::prompt_password("Dashboard password (hidden, min 12 chars): ")?;
     let password = validate_dashboard_password(&first)?;
     let confirm = rpassword::prompt_password("Confirm dashboard password: ")?;
     if password != confirm.trim() {
@@ -537,8 +537,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn short_dashboard_password_is_rejected() {
-        assert!(validate_dashboard_password("1234567").is_err());
-        assert!(validate_dashboard_password("12345678").is_ok());
+    fn short_dashboard_password_is_rejected_for_new_manifests() {
+        assert!(validate_dashboard_password("12345678").is_err());
+        assert!(validate_dashboard_password("correct-horse-battery").is_ok());
     }
 }

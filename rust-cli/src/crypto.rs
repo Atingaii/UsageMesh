@@ -11,7 +11,7 @@ use crate::model::{DashboardAccessEnvelope, EncryptedLedger, Ledger};
 
 const LEDGER_AAD_PREFIX: &str = "usagemesh-ledger-v2:";
 const ACCESS_AAD_PREFIX: &str = "usagemesh-dashboard-access-v1:";
-pub const ACCESS_PBKDF2_ITERATIONS: u32 = 310_000;
+pub const ACCESS_PBKDF2_ITERATIONS: u32 = 600_000;
 
 pub fn generate_key() -> String {
     let mut key = [0u8; 32];
@@ -101,8 +101,8 @@ pub fn wrap_dashboard_key(
     password: &str,
 ) -> Result<DashboardAccessEnvelope> {
     decode_key(encoded_dashboard_key)?;
-    if password.as_bytes().len() < 8 {
-        bail!("dashboard password must be at least 8 bytes long");
+    if password.as_bytes().len() < 12 {
+        bail!("dashboard password must be at least 12 bytes long for new access manifests")
     }
 
     let mut salt = [0u8; 16];
@@ -146,6 +146,11 @@ pub fn unwrap_dashboard_key(
         || envelope.algorithm != "AES-256-GCM"
     {
         bail!("unsupported dashboard access envelope");
+    }
+    // Keep older v1 PBKDF2 envelopes compatible while rejecting maliciously
+    // tiny or pathological iteration counts. Existing 310k manifests remain valid.
+    if !(100_000..=5_000_000).contains(&envelope.iterations) {
+        bail!("dashboard access envelope has an unsafe PBKDF2 iteration count");
     }
     let salt = URL_SAFE_NO_PAD.decode(&envelope.salt)?;
     let nonce = URL_SAFE_NO_PAD.decode(&envelope.nonce)?;
@@ -227,5 +232,38 @@ mod tests {
             key
         );
         assert!(unwrap_dashboard_key("owner/repo", &wrapped, "wrong password").is_err());
+    }
+
+    #[test]
+    fn legacy_310k_access_manifest_keeps_original_password() {
+        let repo = "Owner/Repo";
+        let password = "original password";
+        let encoded_dashboard_key = generate_key();
+        let salt = [7u8; 16];
+        let nonce_bytes = [9u8; 12];
+        let wrapping_key = derive_password_key(password, &salt, 310_000);
+        let cipher = Aes256Gcm::new_from_slice(&wrapping_key).unwrap();
+        let aad = format!("{ACCESS_AAD_PREFIX}{}", repo.to_ascii_lowercase());
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce_bytes),
+                Payload { msg: encoded_dashboard_key.as_bytes(), aad: aad.as_bytes() },
+            )
+            .unwrap();
+        let envelope = DashboardAccessEnvelope {
+            schema_version: 1,
+            kind: "usagemesh-dashboard-access".to_string(),
+            kdf: "PBKDF2-HMAC-SHA256".to_string(),
+            iterations: 310_000,
+            salt: URL_SAFE_NO_PAD.encode(salt),
+            algorithm: "AES-256-GCM".to_string(),
+            nonce: URL_SAFE_NO_PAD.encode(nonce_bytes),
+            ciphertext: URL_SAFE_NO_PAD.encode(ciphertext),
+            updated_at: "2026-08-27T00:00:00Z".to_string(),
+        };
+        assert_eq!(
+            unwrap_dashboard_key(repo, &envelope, password).unwrap(),
+            encoded_dashboard_key
+        );
     }
 }

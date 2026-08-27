@@ -1,6 +1,10 @@
 name: Rust CLI CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -128,6 +132,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Security and request-metadata invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'ACCESS_PBKDF2_ITERATIONS: u32 = 600_000' rust-cli/src/crypto.rs
+          grep -q 'legacy_310k_access_manifest_keeps_original_password' rust-cli/src/crypto.rs
+          grep -q 'reasoning_effort_for_message' rust-cli/src/collector.rs
+          grep -q 'thinkingbudget' rust-cli/src/evidence.rs
       - run: cargo clippy --workspace --all-targets
 
   dashboard:
@@ -138,17 +150,22 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: web-ui/package.json
+          cache-dependency-path: web-ui/package-lock.json
       - name: Validate materialized dashboard invariants
         working-directory: web-ui
         shell: bash
         run: |
+          set -euo pipefail
           test -s src/app.tsx
           test -s public/usagemesh-icon.svg
           test -s public/device-index.json
           grep -q "subscriptionSpeedMultiplier" src/app.tsx
           grep -q "分析工作台" src/app.tsx
-          grep -q "sessionStorage" src/app.tsx
+          grep -q "实时请求明细" src/app.tsx
+          grep -q "envelope.iterations < 100_000" src/app.tsx
+          grep -q "Content-Security-Policy" index.html
+          ! grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
+          ! grep -q "sessionStorage" src/app.tsx
           grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
       - name: Install dashboard dependencies
