@@ -1,0 +1,178 @@
+name: Set One Minute Cadence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/set-one-minute-cadence.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.repository == 'Atingaii/UsageMesh'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply one-minute cadence migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('rust-cli/src/main.rs')
+          s = main.read_text()
+          s = s.replace('#[arg(long, default_value_t = 15)]', '#[arg(long, default_value_t = 1)]')
+          needle = '''    match update::maybe_auto_update(&config, full, quiet) {
+        Ok(update::AutoUpdateOutcome::Restarted) => return Ok(()),
+        Ok(update::AutoUpdateOutcome::Current) => {}
+        Err(error) => {
+            if !quiet {
+                eprintln!("Auto-update check skipped: {error:#}");
+            }
+        }
+    }
+
+    let previous = config::read_cached_ledger()?;'''
+          replacement = '''    match update::maybe_auto_update(&config, full, quiet) {
+        Ok(update::AutoUpdateOutcome::Restarted) => return Ok(()),
+        Ok(update::AutoUpdateOutcome::Current) => {}
+        Err(error) => {
+            if !quiet {
+                eprintln!("Auto-update check skipped: {error:#}");
+            }
+        }
+    }
+
+    // v2.0.3 standardizes the live refresh cadence at one minute. Existing
+    // scheduled installs are migrated in place; devices intentionally created
+    // with --no-schedule stay unscheduled.
+    let mut config = config;
+    if config.interval_minutes != 1 {
+        let had_scheduler = scheduler::is_installed();
+        config.interval_minutes = 1;
+        config::save(&config).context("failed to persist the one-minute sync cadence")?;
+        if had_scheduler {
+            match scheduler::install(1) {
+                Ok(description) => {
+                    if !quiet {
+                        println!("Automatic sync cadence migrated: {description}");
+                    }
+                }
+                Err(error) => {
+                    if !quiet {
+                        eprintln!("Could not migrate the existing scheduler to one minute: {error:#}");
+                    }
+                }
+            }
+        }
+    }
+
+    let previous = config::read_cached_ledger()?;'''
+          if needle not in s:
+              raise SystemExit('main.rs migration insertion point not found')
+          s = s.replace(needle, replacement, 1)
+          main.write_text(s)
+
+          cfg = Path('rust-cli/src/config.rs')
+          s = cfg.read_text().replace('clamp(5, 1440)', 'clamp(1, 1440)')
+          cfg.write_text(s)
+
+          scheduler = Path('rust-cli/src/scheduler.rs')
+          s = scheduler.read_text()
+          s = s.replace('clamp(5, 1440)', 'clamp(1, 1440)')
+          s = s.replace('5..=59 => ("minutes", interval_minutes),', '1..=59 => ("minutes", interval_minutes),')
+          marker = '''pub fn uninstall() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        return uninstall_windows();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return uninstall_macos();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return uninstall_linux();
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+'''
+          added = marker + '''
+pub fn is_installed() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return Command::new("schtasks.exe")
+            .args(["/Query", "/TN", TASK_NAME])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return launch_agent_path().map(|path| path.is_file()).unwrap_or(false);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if systemd_dir()
+            .map(|dir| dir.join("usagemesh.timer").is_file())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        return Command::new("crontab")
+            .arg("-l")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains("# usagemesh-usage-sync"))
+            .unwrap_or(false);
+    }
+    #[allow(unreachable_code)]
+    false
+}
+'''
+          if 'pub fn is_installed() -> bool' not in s:
+              if marker not in s:
+                  raise SystemExit('scheduler.rs insertion point not found')
+              s = s.replace(marker, added, 1)
+          s = s.replace('assert_eq!(cron_cadence(15), ("minutes", 15));', 'assert_eq!(cron_cadence(1), ("minutes", 1));\n        assert_eq!(cron_cadence(15), ("minutes", 15));')
+          scheduler.write_text(s)
+
+          cargo = Path('rust-cli/Cargo.toml')
+          s = cargo.read_text().replace('version = "2.0.2"', 'version = "2.0.3"', 1)
+          cargo.write_text(s)
+
+          lock = Path('Cargo.lock')
+          s = lock.read_text()
+          old = 'name = "usagemesh"\nversion = "2.0.2"'
+          new = 'name = "usagemesh"\nversion = "2.0.3"'
+          if old not in s:
+              raise SystemExit('Cargo.lock UsageMesh 2.0.2 entry not found')
+          lock.write_text(s.replace(old, new, 1))
+
+          readme = Path('README.md')
+          s = readme.read_text()
+          s = s.replace('performs the first full scan, and installs the native periodic scheduler unless you pass `--no-schedule`.', 'performs the first full scan, and installs the native scheduler at a **one-minute cadence** unless you pass `--no-schedule`.')
+          s = s.replace('Normal scheduled syncs also check the latest stable GitHub Release. When a newer verified release exists, UsageMesh updates itself in place, synchronizes the fork, and resumes the same sync automatically. The configured scheduler interval is preserved, so users normally configure UsageMesh only once.', 'Normal scheduled syncs also check the latest stable GitHub Release. When a newer verified release exists, UsageMesh updates itself in place, synchronizes the fork, and resumes the same sync automatically. UsageMesh now standardizes scheduled refreshes at **once per minute**; existing scheduled installations migrate to that cadence automatically, while `--no-schedule` installations remain unscheduled.')
+          readme.write_text(s)
+
+          zh = Path('README.zh-CN.md')
+          s = zh.read_text()
+          s = s.replace('完成第一次全量扫描，并安装系统原生的定时同步任务。', '完成第一次全量扫描，并安装系统原生的定时同步任务，默认 **每 1 分钟同步一次**。')
+          s = s.replace('正常的定时同步还会检查最新稳定版 GitHub Release；发现新版后，UsageMesh 会校验并原地升级、同步 Fork，然后自动继续当前同步。原有同步间隔保持不变，因此用户通常只需要在第一次安装时完成配置。', '正常的定时同步还会检查最新稳定版 GitHub Release；发现新版后，UsageMesh 会校验并原地升级、同步 Fork，然后自动继续当前同步。UsageMesh 现在统一为 **每 1 分钟同步一次**；已有定时安装会自动迁移到 1 分钟周期，而使用 `--no-schedule` 的设备仍保持不创建定时任务。')
+          zh.write_text(s)
+          PY
+
+          cargo fmt --all
+          cargo test --workspace
+          git config user.name 'UsageMesh Maintenance'
+          git config user.email 'actions@users.noreply.github.com'
+          git add rust-cli/src/main.rs rust-cli/src/config.rs rust-cli/src/scheduler.rs rust-cli/Cargo.toml Cargo.lock README.md README.zh-CN.md
+          git diff --cached --check
+          git commit -m 'feat: refresh UsageMesh every minute'
+          git push origin HEAD:main
