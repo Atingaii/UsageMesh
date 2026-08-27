@@ -19,7 +19,7 @@ UsageMesh is for people who use AI coding tools on more than one machine and wan
 | **Local-first** | Usage is scanned locally; raw prompts, responses, source code and full transcripts are not uploaded by design. |
 | **Encrypted by default** | Device ledgers are encrypted with AES-256-GCM before they are written to GitHub. |
 | **Serverless** | GitHub branches are the data transport and GitHub Pages hosts the dashboard. |
-| **Fork-owned** | Your fork is the workspace. Your dashboard lives at `https://<you>.github.io/UsageMesh/`. |
+| **Fork-owned** | Your fork is the workspace. Your dashboard lives at `https://<you>.github.io/<repo>/`. |
 | **Diagnostic analytics** | Overview answers “how much”; Analysis explains concentration, efficiency and high-consumption combinations. |
 
 ## Quick start
@@ -28,7 +28,7 @@ UsageMesh is for people who use AI coding tools on more than one machine and wan
 
 Fork `Atingaii/UsageMesh` to your own account and keep the fork **public**. The browser dashboard must be able to read ciphertext without a server-side GitHub session; device details are encrypted before upload.
 
-GitHub does not automatically execute workflows in a new public fork. Open the fork's **Actions** tab once, enable workflows, then run **Deploy Dashboard**. The workflow attempts to enable Pages automatically. If GitHub blocks that API action, use **Settings → Pages → Source → GitHub Actions** and rerun it.
+GitHub does not automatically execute workflows in a new public fork. Open the fork's **Actions** tab once, enable workflows, then run **Deploy Dashboard**. If Pages is not enabled yet, choose **Settings → Pages → Source → GitHub Actions** and rerun **Deploy Dashboard**.
 
 ### 2. Install the CLI
 
@@ -54,7 +54,7 @@ usagemesh setup
 usagemesh dashboard
 ```
 
-The URL is derived from your fork, for example `https://alice.github.io/UsageMesh/`.
+Use the exact URL printed by the CLI. It is derived from the actual fork name and remains correct if the fork was renamed.
 
 ## GitHub authentication
 
@@ -73,7 +73,7 @@ For least privilege, create a **fine-grained personal access token** after you f
 1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
 2. Select your account as **Resource owner**.
 3. Choose **Only select repositories** → your `UsageMesh` fork.
-4. Grant **Contents: Read and write**. If available and you want API-assisted Pages initialization, also grant **Pages: Read and write**.
+4. Grant **Contents: Read and write**. Device synchronization does not require additional repository permissions.
 5. Set a reasonable expiration date and generate the token.
 6. Run `usagemesh setup` and paste the `github_pat_...` value at the hidden prompt.
 
@@ -95,6 +95,25 @@ Then verify:
 usagemesh sync --full
 usagemesh status
 ```
+
+## Pages troubleshooting
+
+First confirm the fork's latest **Actions → Deploy Dashboard** run is green and **Settings → Pages** uses **GitHub Actions**. Then use the exact URL from:
+
+```bash
+usagemesh dashboard
+```
+
+If it still does not open:
+
+```bash
+curl -I "$(usagemesh dashboard)"
+nslookup github.io
+```
+
+A `200` means Pages is online; retry with a private window or hard refresh. A `404` usually indicates the wrong repository path/case or a deployment that has not propagated yet. A DNS-resolution error means the current network cannot resolve or reach `github.io`; that is independent of UsageMesh synchronization.
+
+Dashboard assets use relative URLs, so a renamed fork does not depend on a hard-coded `/UsageMesh/` asset prefix.
 
 ## Dashboard information architecture
 
