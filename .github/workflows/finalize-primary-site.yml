@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Remove demo mode and use Releases only
+      - name: Remove demo mode and distribution dependency
         shell: bash
         run: |
           set -euo pipefail
@@ -28,7 +28,6 @@ jobs:
 
           app_path = Path('web-ui/src/app.tsx')
           app = app_path.read_text()
-
           replacements = [
               ("function isBundledDemoRepo(repo: string): boolean {\n  return repo.toLowerCase() === DEFAULT_REPO.toLowerCase();\n}\n\n", ""),
               ("  const accessUrl = isBundledDemoRepo(repo)\n    ? new URL('demo/access.json', document.baseURI).toString()\n    : `${RAW}/${repo}/${ACCESS_BRANCH}/access.json`;\n  const envelope = await json<AccessEnvelope>(accessUrl);",
@@ -49,9 +48,11 @@ jobs:
               p = Path(name)
               text = p.read_text()
               if lang == 'en':
-                  text = re.sub(r"\n> \*\*Live demo:\*\* `https://atingaii\.github\.io/UsageMesh/` · password: `usagemesh-demo`  \n> The demo workspace contains synthetic sample data only\. It contains no real user, device, or session data\.\n", "\n> **Primary dashboard:** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh ships with **no default dashboard password**. The workspace owner creates the password locally during `usagemesh setup`.\n", text, count=1)
+                  text, n = re.subn(r"\n> \*\*Live demo:\*\* `https://atingaii\.github\.io/UsageMesh/` · password: `usagemesh-demo`  \n> The demo workspace contains synthetic sample data only\. It contains no real user, device, or session data\.\n", "\n> **Primary dashboard:** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh ships with **no default dashboard password**. The workspace owner creates the password locally during `usagemesh setup`.\n", text, count=1)
               else:
-                  text = re.sub(r"\n> \*\*在线演示：\*\* `https://atingaii\.github\.io/UsageMesh/` · 密码：`usagemesh-demo`  \n> 演示工作区只包含人工生成的合成样例数据，不包含任何真实用户、设备或会话数据。\n", "\n> **主 Dashboard：** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh **不预置 Dashboard 密码**。工作区所有者在首次执行 `usagemesh setup` 时于本机自行创建密码。\n", text, count=1)
+                  text, n = re.subn(r"\n> \*\*在线演示：\*\* `https://atingaii\.github\.io/UsageMesh/` · 密码：`usagemesh-demo`  \n> 演示工作区只包含人工生成的合成样例数据，不包含任何真实用户、设备或会话数据。\n", "\n> **主 Dashboard：** `https://atingaii.github.io/UsageMesh/`  \n> UsageMesh **不预置 Dashboard 密码**。工作区所有者在首次执行 `usagemesh setup` 时于本机自行创建密码。\n", text, count=1)
+              if n != 1:
+                  raise SystemExit(f'demo README block not found in {name}')
               p.write_text(text)
 
           sh = Path('install.sh')
@@ -61,13 +62,12 @@ jobs:
           if old not in text:
               raise SystemExit('install.sh release-base block not found')
           text = text.replace(old, new, 1)
-          text = re.sub(
+          text, n = re.subn(
               r'download_release_file\(\) \{.*?\n\}\n\ndownload_release_file "\$ASSET"',
               '''download_release_file() {\n  name="$1"\n  output="$2"\n\n  if download_direct "$BASE/$name" "$output"; then\n    return 0\n  fi\n\n  if [ -z "${USAGEMESH_RELEASE_BASE:-}" ] && download_with_gh "$name" "$output"; then\n    return 0\n  fi\n\n  echo "Failed to download $name from GitHub Releases." >&2\n  echo "Check access to github.com or authenticate once with 'gh auth login', then retry." >&2\n  exit 1\n}\n\ndownload_release_file "$ASSET"''',
-              text,
-              count=1,
-              flags=re.S,
-          )
+              text, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('install.sh download function not found')
           sh.write_text(text)
 
           ps = Path('install.ps1')
@@ -77,31 +77,34 @@ jobs:
           if old not in text:
               raise SystemExit('install.ps1 release-base block not found')
           text = text.replace(old, new, 1)
-          text = re.sub(
+          text, n = re.subn(
               r'function Download-ReleaseFile\(\[string\]\$Name, \[string\]\$OutFile\) \{.*?\n\}\n\ntry \{',
               '''function Download-ReleaseFile([string]$Name, [string]$OutFile) {\n  try {\n    Download-Direct "$Base/$Name" $OutFile\n    return\n  } catch {\n    if ($env:USAGEMESH_RELEASE_BASE) {\n      throw "Failed to download $Name from $Base. $($_.Exception.Message)"\n    }\n  }\n\n  if (Download-WithGitHubCli $Name $OutFile) { return }\n  throw "Failed to download $Name from GitHub Releases. Check access to github.com or run 'gh auth login' once, then retry."\n}\n\ntry {''',
-              text,
-              count=1,
-              flags=re.S,
-          )
+              text, count=1, flags=re.S)
+          if n != 1:
+              raise SystemExit('install.ps1 download function not found')
           ps.write_text(text)
 
           rel = Path('.github/workflows/release.yml')
           text = rel.read_text()
           text, n = re.subn(
               r'\n      - name: Publish verified distribution branch\n.*?(?=\n      - name: Publish GitHub Release when repository policy permits)',
-              '',
-              text,
-              count=1,
-              flags=re.S,
-          )
+              '', text, count=1, flags=re.S)
           if n != 1:
               raise SystemExit('distribution publish step not found')
           text = text.replace('Publish GitHub Release when repository policy permits', 'Publish GitHub Release')
-          text = text.replace('https://raw.githubusercontent.com/${{ github.repository }}/distribution/latest', 'https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}')
+          repo_expr = '$' + '{{ github.repository }}'
+          tag_expr = '$' + '{{ needs.publish.outputs.tag }}'
+          old_url = f'https://raw.githubusercontent.com/{repo_expr}/distribution/latest'
+          new_url = f'https://github.com/{repo_expr}/releases/download/{tag_expr}'
+          text = text.replace(old_url, new_url)
           if 'distribution/latest' in text or 'Publish verified distribution branch' in text:
               raise SystemExit('distribution dependency still present in release workflow')
           rel.write_text(text)
+
+          marker = Path('.release/v2.0.0')
+          m = marker.read_text().replace('Distribution source: distribution/latest.', 'Distribution source: GitHub Release v2.0.0.')
+          marker.write_text(m)
           PY
 
           rm -rf web-ui/public/demo
@@ -110,9 +113,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ! grep -R -n "usagemesh-demo" README.md README.zh-CN.md web-ui/src web-ui/public || false
-          ! grep -R -n "isBundledDemoRepo\|demo/access.json\|demo/index.json" web-ui/src/app.tsx
-          ! grep -R -n "distribution/latest" install.sh install.ps1 .github/workflows/release.yml
+          if grep -R -n "usagemesh-demo" README.md README.zh-CN.md web-ui/src web-ui/public; then exit 1; fi
+          if grep -R -n "isBundledDemoRepo\|demo/access.json\|demo/index.json" web-ui/src/app.tsx; then exit 1; fi
+          if grep -R -n "distribution/latest" install.sh install.ps1 .github/workflows/release.yml .release/v2.0.0; then exit 1; fi
           sh -n install.sh
           cd web-ui
           npm install --no-audit --no-fund
