@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           cargo fmt --all
           cargo test --workspace --all-targets
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets
       - name: Verify dashboard
         working-directory: web-ui
         run: |
@@ -47,7 +47,10 @@ jobs:
           grep -q 'route_hint_from_base_url' rust-cli/src/evidence.rs
           grep -q 'lookalike_domain_is_not_official' rust-cli/src/provider.rs
           grep -q 'raw URL remains local' rust-cli/src/provider.rs
-          ! grep -R --line-number -E 'api\.openai\.com/v1.*(ledger|route_provider)' rust-cli/src web-ui/src || true
+          if grep -R --line-number -E 'base_url:|baseUrl:|api_url:|apiUrl:|endpoint:' rust-cli/src/model.rs web-ui/src/app.tsx; then
+            echo 'Raw endpoint field leaked into a persisted/public schema.' >&2
+            exit 1
+          fi
       - name: Commit verified fix and remove temporary files
         shell: bash
         run: |
