@@ -196,6 +196,14 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
 
     config::write_cached_ledger(&ledger)?;
     let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
+    if full {
+        github
+            .sync_main_with_upstream()
+            .context("failed to synchronize the UsageMesh fork with the current upstream main")?;
+        if !quiet && !config.repo.eq_ignore_ascii_case(github::UPSTREAM_REPO) {
+            println!("Fork source synchronized with {} main.", github::UPSTREAM_REPO);
+        }
+    }
     if previous_for_compare
         .as_ref()
         .is_some_and(|previous| collector::same_accounting(previous, &ledger))
