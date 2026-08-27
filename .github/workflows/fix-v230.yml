@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/scripts/fix_v230.py'
+      - '.github/scripts/fix_v230_followup.py'
       - '.github/workflows/fix-v230.yml'
 
 permissions:
@@ -24,7 +25,9 @@ jobs:
         with:
           components: clippy,rustfmt
       - name: Apply patch
-        run: python .github/scripts/fix_v230.py
+        run: |
+          python .github/scripts/fix_v230.py
+          python .github/scripts/fix_v230_followup.py
       - name: Verify Rust
         shell: bash
         run: |
@@ -45,6 +48,8 @@ jobs:
           grep -q 'official-time-aware-api-estimate-v4' rust-cli/src/pricing.rs
           grep -q 'GPT56_SOL_PROMO_EFFECTIVE' rust-cli/src/pricing.rs
           grep -q 'route_hint_from_base_url' rust-cli/src/evidence.rs
+          grep -q 'client_route_hints' rust-cli/src/evidence.rs
+          grep -q 'CODEBUDDY_BASE_URL' rust-cli/src/evidence.rs
           grep -q 'lookalike_domain_is_not_official' rust-cli/src/provider.rs
           grep -q 'raw URL remains local' rust-cli/src/provider.rs
           if grep -R --line-number -E 'base_url:|baseUrl:|api_url:|apiUrl:|endpoint:' rust-cli/src/model.rs web-ui/src/app.tsx; then
@@ -57,7 +62,7 @@ jobs:
           set -euo pipefail
           git config user.name 'Atingaii'
           git config user.email 'zyaiting@email.swu.edu.cn'
-          git rm -f .github/scripts/fix_v230.py .github/workflows/fix-v230.yml
+          git rm -f .github/scripts/fix_v230.py .github/scripts/fix_v230_followup.py .github/workflows/fix-v230.yml
           git add -A
           git commit -m 'fix: use official time-aware pricing and local endpoint route evidence'
           git push origin HEAD:main
