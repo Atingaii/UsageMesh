@@ -196,6 +196,32 @@ impl GithubClient {
         Ok(())
     }
 
+    /// Keep the fork's default `main` branch aligned with the current upstream
+    /// before a full/migration sync. This repairs older forks without requiring
+    /// the user to click GitHub's "Sync fork" button manually. It is skipped for
+    /// the upstream repository itself and never touches the isolated um-* data
+    /// branches.
+    pub fn sync_main_with_upstream(&self) -> Result<()> {
+        if self.repo.eq_ignore_ascii_case(UPSTREAM_REPO) {
+            return Ok(());
+        }
+        let response = self
+            .request(
+                reqwest::Method::POST,
+                format!("{API}/repos/{}/merge-upstream", self.repo),
+            )
+            .json(&json!({ "branch": "main" }))
+            .send()
+            .context("failed to contact GitHub while synchronizing the fork")?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            bail!(
+                "the fork's main branch cannot be fast-forwarded/merged from {UPSTREAM_REPO}. Resolve the fork conflict on GitHub, then rerun `usagemesh sync --full`"
+            );
+        }
+        checked(response, "upstream fork synchronization")?;
+        Ok(())
+    }
+
     pub fn snapshot_branch(device_id: &str) -> String {
         format!("{LEDGER_BRANCH_PREFIX}{}", device_hash(device_id))
     }
