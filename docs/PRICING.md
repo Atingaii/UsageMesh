@@ -15,3 +15,8 @@ For GPT-5.6 Sol the guarded base card per 1M tokens is: fresh input **$5.00**, c
 ## Long context and unknown prices
 
 Long-context rules are applied from request-level evidence where supported. When a model, route or cache-write bucket cannot be priced confidently, UsageMesh marks the estimate as a lower bound instead of inventing a precise value.
+
+
+## Pricing-policy migration
+
+A pricing-policy change invalidates historical stored `costUsd` values. UsageMesh compares the cached ledger's pricing policy identifier with the running CLI. On the first sync after an accounting-policy upgrade, it automatically performs a full local rescan/reprice before publishing the encrypted ledger. This prevents a two-day incremental merge from leaving older dates on a previous cost policy.

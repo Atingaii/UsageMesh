@@ -572,9 +572,29 @@ function tierLabel(value: string | null | undefined): string {
   return value ? String(value) : 'Standard';
 }
 
-function routeLabel(row: LedgerRow): string {
-  if (String(row.routeType || '').toLowerCase() === 'official') return '官方';
-  return String(row.routeProvider || row.provider || '未知');
+function normalizedRoute(row: LedgerRow): { provider: string; type: string; label: string } {
+  const raw = String(row.provider || '').trim().toLowerCase();
+  const provider = String(row.routeProvider || row.provider || 'unknown').trim().toLowerCase();
+  const vendor = String(row.upstreamVendor || '').trim().toLowerCase();
+  let type = String(row.routeType || 'unknown').trim().toLowerCase();
+  let canonical = provider;
+
+  // Older ledgers sometimes carried `openai` as an unknown route when the Codex
+  // parser knew the first-party provider but route evidence had not yet been
+  // normalized. Do not rewrite explicit relay/cloud/aggregator evidence.
+  const firstPartyAliases: Record<string, string> = {
+    openai: 'openai', 'openai-codex': 'openai', anthropic: 'anthropic',
+    google: 'google', gemini: 'google', 'google-ai': 'google',
+    deepseek: 'deepseek', 'deepseek-ai': 'deepseek',
+  };
+  const firstParty = firstPartyAliases[provider] || firstPartyAliases[raw];
+  if (type === 'official' || ((type === 'unknown' || !type) && firstParty && (!vendor || vendor === firstParty))) {
+    type = 'official';
+    canonical = 'official';
+    const vendorLabel = (vendor || firstParty || '').replace(/^./, c => c.toUpperCase());
+    return { provider: canonical, type, label: vendorLabel ? `官方 · ${vendorLabel}` : '官方' };
+  }
+  return { provider: canonical || 'unknown', type: type || 'unknown', label: String(row.routeProvider || row.provider || '未知') };
 }
 
 function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
@@ -587,6 +607,7 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
   const cacheRead = Number(row.cacheRead || 0);
   const cacheWrite = Number(row.cacheWrite || 0);
   const reasoning = Number(row.reasoning || 0);
+  const route = normalizedRoute(row);
   return {
     id: `${deviceId}:${row.date || ''}:${row.client || ''}:${row.model || ''}:${index}`,
     date: String(row.date || ''),
@@ -597,8 +618,8 @@ function toRecord(ledger: Ledger, row: LedgerRow, index: number): UsageRecord {
     tool: String(row.client || 'Unknown'),
     model: String(row.model || 'Unknown'),
     vendor: String(row.upstreamVendor || 'Unknown'),
-    routeProvider: routeLabel(row),
-    routeType: String(row.routeType || 'unknown'),
+    routeProvider: route.provider,
+    routeType: route.type,
     rawProvider: String(row.provider || 'unknown'),
     tier: tierLabel(row.tier),
     inputTokens: input,
@@ -625,7 +646,7 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
   const input = Number(row.input || 0), output = Number(row.output || 0);
   const cacheRead = Number(row.cacheRead || 0), cacheWrite = Number(row.cacheWrite || 0);
   const reasoning = Number(row.reasoning || 0);
-  const route = routeLabel(row as LedgerRow);
+  const route = normalizedRoute(row as LedgerRow);
   return {
     id: `${deviceId}:${timestampMs}:${row.client || ''}:${row.model || ''}:${index}`,
     timestampMs,
@@ -637,8 +658,8 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
     tool: String(row.client || 'Unknown'),
     model: String(row.model || 'Unknown'),
     vendor: String(row.upstreamVendor || 'Unknown'),
-    routeProvider: route,
-    routeType: String(row.routeType || 'unknown'),
+    routeProvider: route.label,
+    routeType: route.type,
     rawProvider: String(row.provider || 'unknown'),
     tier: tierLabel(row.tier),
     reasoningEffort: String(row.reasoningEffort || ''),
@@ -1004,7 +1025,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差；计费策略升级时设备会自动全量重建历史账本，避免旧日期残留过期费用。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
           <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>

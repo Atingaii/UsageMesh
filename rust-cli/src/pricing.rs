@@ -20,6 +20,7 @@ use serde::Deserialize;
 use crate::model::{Metrics, PricingInfo};
 
 const MODELS_DEV_URL: &str = "https://models.dev/api.json";
+pub const PRICING_POLICY: &str = "api-equivalent-estimate-v2";
 const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
 const GPT56_LONG_INPUT_MULTIPLIER: f64 = 2.0;
@@ -260,7 +261,7 @@ impl PriceBook {
 
     pub fn metadata(&self) -> PricingInfo {
         PricingInfo {
-            policy: "api-equivalent-estimate".to_string(),
+            policy: PRICING_POLICY.to_string(),
             source: format!("CC Switch compatible · {}", self.catalog_state),
             source_url: MODELS_DEV_URL.to_string(),
             compatibility: "GPT-5.6 guarded base rates; speed tier is recorded separately and does not multiply USD cost"

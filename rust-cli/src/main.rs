@@ -273,9 +273,20 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
 
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
+    let pricing_migration = previous
+        .as_ref()
+        .is_some_and(|ledger| ledger.pricing.policy != pricing::PRICING_POLICY);
+    let effective_full = full || previous.is_none() || pricing_migration;
 
-    let (ledger, mode) = if full || previous.is_none() {
-        (collector::collect(device_info(&config), None)?, "full")
+    let (ledger, mode) = if effective_full {
+        (
+            collector::collect(device_info(&config), None)?,
+            if pricing_migration {
+                "full/pricing-migration"
+            } else {
+                "full"
+            },
+        )
     } else {
         let since = (Local::now().date_naive() - Duration::days(2))
             .format("%Y-%m-%d")
@@ -332,9 +343,12 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         println!("  Rows: {}", ledger.rows.len());
         println!("  Tokens: {}", ledger.totals.total_tokens());
         println!(
-            "  Subscription-equivalent cost: ${:.2}",
+            "  API-equivalent estimated cost: ${:.2}",
             ledger.totals.cost_usd
         );
+        if pricing_migration {
+            println!("  Pricing migration: rebuilt full local history with the current policy");
+        }
         println!("  Pricing: {}", ledger.pricing.source);
         println!("  Scan: {} ms", ledger.scan_ms);
     }

@@ -89,7 +89,7 @@ fn load_scanner_settings() -> ScannerSettings {
 fn parser_provider_is_explicit(client: &str, raw_provider: &str) -> bool {
     !raw_provider.trim().is_empty()
         && raw_provider != "unknown"
-        && matches!(client, "opencode" | "micode")
+        && matches!(client, "codex" | "opencode" | "micode")
 }
 
 fn token_metrics_from_message(message: &ParsedMessage) -> Metrics {
@@ -112,12 +112,10 @@ fn priced_metrics_from_message(
     let mut metrics = token_metrics_from_message(message);
     let quote = price_book.quote(model, Some("standard"), &metrics);
     metrics.cost_usd = quote.cost_usd;
-    // A canonical Codex fallback does not carry request-level service tier. The
-    // standard-card number remains useful, but it is a lower bound because some
-    // requests may have used Fast/Priority. Exact tier rows replace it whenever
-    // their daily token total reconciles with Tokscale.
-    let tier_unknown = message.client == "codex";
-    (metrics, quote.lower_bound || tier_unknown)
+    // Service tier is usage metadata, not a USD multiplier. A canonical Codex
+    // fallback can therefore use the same API-equivalent price even when the
+    // request-level Standard/Fast label is unavailable.
+    (metrics, quote.lower_bound)
 }
 
 fn add_grouped(

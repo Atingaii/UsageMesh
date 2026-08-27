@@ -1,0 +1,6 @@
+UsageMesh 2.2.3 accounting migration and route-normalization release.
+- Pricing-policy upgrades now force one automatic full historical reprice instead of leaving stale costUsd values in old dates.
+- GPT-5.6 USD estimates use the same base card for Standard/Fast/Priority; tier stays separate metadata.
+- Codex `openai` provider is normalized to the official route unless explicit relay/cloud evidence overrides it.
+- The dashboard also renders legacy first-party `openai` rows with an official marker.
+- Same-tab encrypted session resume from v2.2.2 remains compatible with the original Dashboard password.
