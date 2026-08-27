@@ -142,12 +142,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/usagemesh-dist
+          mkdir -p /tmp/usagemesh-dist
+          cp -a dist/. /tmp/usagemesh-dist/
+          test -n "$(find /tmp/usagemesh-dist -maxdepth 1 -type f -print -quit)"
           git config user.name 'UsageMesh Release'
           git config user.email 'actions@users.noreply.github.com'
           git checkout --orphan usagemesh-distribution
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           mkdir -p latest
-          cp "$GITHUB_WORKSPACE"/dist/* latest/
+          cp -a /tmp/usagemesh-dist/. latest/
           printf '%s\n' "$RELEASE_TAG" > VERSION
           printf '%s\n' 'UsageMesh verified binary distribution. Files in latest/ are SHA-256 checked by the installers.' > README.txt
           git add -A
@@ -162,9 +166,9 @@ jobs:
         run: |
           set +e
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$GITHUB_WORKSPACE"/dist/* --clobber
+            gh release upload "$RELEASE_TAG" /tmp/usagemesh-dist/* --clobber
           else
-            gh release create "$RELEASE_TAG" "$GITHUB_WORKSPACE"/dist/* \
+            gh release create "$RELEASE_TAG" /tmp/usagemesh-dist/* \
               --target "$GITHUB_SHA" \
               --generate-notes \
               --title "$RELEASE_TAG"
