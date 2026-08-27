@@ -75,6 +75,8 @@ usagemesh setup
 
 `setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native periodic scheduler unless you pass `--no-schedule`.
 
+A full sync also synchronizes the fork's `main` branch with the current `Atingaii/UsageMesh` upstream before publishing usage data. This is the automatic repair path for users who forked an older version: they do not need to click GitHub's **Sync fork** button manually.
+
 Credential lookup order is: explicit `--token` → `USAGEMESH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN` → authenticated `gh auth token` → **hidden PAT prompt**. Regular users should avoid `--token` so credentials are not left in shell history.
 
 ### 4. Open your dashboard
@@ -84,6 +86,20 @@ usagemesh dashboard
 ```
 
 The URL is derived from the actual fork. For example, if the GitHub account is `alice` and the fork is still named `UsageMesh`, the URL is `https://alice.github.io/UsageMesh/`. If the fork was renamed, initialize with `usagemesh setup --repo OWNER/RENAMED_REPO`; the dashboard URL is then generated from that real repository name.
+
+### Dashboard freshness
+
+Once **Deploy Dashboard** has been enabled in a fork, each deployment builds the dashboard from the current `Atingaii/UsageMesh` upstream source rather than trusting a potentially stale copy of `web-ui` in the fork. The workflow also runs once per day, so an existing user's Pages site keeps receiving current dashboard fixes without requiring a new fork.
+
+The deployed site includes `/build-info.json` with the workspace repository and the exact upstream dashboard commit used for that build. This makes stale-deployment problems diagnosable instead of silently looking like a password or data error.
+
+For an existing installation, rerun the installer to get the latest CLI and then run:
+
+```bash
+usagemesh sync --full
+```
+
+That refreshes both the local accounting snapshot and the fork's upstream source.
 
 ## Add another device
 
