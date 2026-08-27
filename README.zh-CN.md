@@ -9,8 +9,8 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="SECURITY.md">安全模型</a> · <a href="docs/PRICING.md">费用口径</a></p>
 
-> **在线演示：** `https://atingaii.github.io/UsageMesh/` · 密码：`usagemesh-demo`  
-> 演示工作区只包含人工生成的合成样例数据，不包含任何真实用户、设备或会话数据。
+> **主 Dashboard：** `https://atingaii.github.io/UsageMesh/`  
+> UsageMesh **不预置 Dashboard 密码**。工作区所有者在首次执行 `usagemesh setup` 时于本机自行创建密码。
 
 ## UsageMesh 是什么
 

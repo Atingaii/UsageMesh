@@ -2,9 +2,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $Repo = 'Atingaii/UsageMesh'
-$DefaultDistributionBase = "https://raw.githubusercontent.com/$Repo/distribution/latest"
 $DefaultReleaseBase = "https://github.com/$Repo/releases/latest/download"
-$Base = if ($env:USAGEMESH_RELEASE_BASE) { $env:USAGEMESH_RELEASE_BASE.TrimEnd('/') } else { $DefaultDistributionBase }
+$Base = if ($env:USAGEMESH_RELEASE_BASE) { $env:USAGEMESH_RELEASE_BASE.TrimEnd('/') } else { $DefaultReleaseBase }
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   try {
@@ -96,8 +95,6 @@ function Download-WithGitHubCli([string]$Name, [string]$OutFile) {
 }
 
 function Download-ReleaseFile([string]$Name, [string]$OutFile) {
-  # Primary path: GitHub-hosted distribution branch. This keeps installation
-  # independent of the Releases API while retaining checksum verification.
   try {
     Download-Direct "$Base/$Name" $OutFile
     return
@@ -107,13 +104,8 @@ function Download-ReleaseFile([string]$Name, [string]$OutFile) {
     }
   }
 
-  try {
-    Download-Direct "$DefaultReleaseBase/$Name" $OutFile
-    return
-  } catch {}
-
   if (Download-WithGitHubCli $Name $OutFile) { return }
-  throw "Failed to download $Name from UsageMesh distribution or GitHub Releases. Check access to raw.githubusercontent.com and github.com, then retry."
+  throw "Failed to download $Name from GitHub Releases. Check access to github.com or run 'gh auth login' once, then retry."
 }
 
 try {

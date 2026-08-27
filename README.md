@@ -9,8 +9,8 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a> · <a href="SECURITY.md">Security</a> · <a href="docs/PRICING.md">Cost semantics</a></p>
 
-> **Live demo:** `https://atingaii.github.io/UsageMesh/` · password: `usagemesh-demo`  
-> The demo workspace contains synthetic sample data only. It contains no real user, device, or session data.
+> **Primary dashboard:** `https://atingaii.github.io/UsageMesh/`  
+> UsageMesh ships with **no default dashboard password**. The workspace owner creates the password locally during `usagemesh setup`.
 
 ## Why UsageMesh
 

@@ -2,9 +2,8 @@
 set -eu
 
 REPO="Atingaii/UsageMesh"
-DEFAULT_DISTRIBUTION_BASE="https://raw.githubusercontent.com/$REPO/distribution/latest"
 DEFAULT_RELEASE_BASE="https://github.com/$REPO/releases/latest/download"
-BASE="${USAGEMESH_RELEASE_BASE:-$DEFAULT_DISTRIBUTION_BASE}"
+BASE="${USAGEMESH_RELEASE_BASE:-$DEFAULT_RELEASE_BASE}"
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -96,27 +95,16 @@ download_release_file() {
   name="$1"
   output="$2"
 
-  # Primary path: immutable GitHub-hosted distribution branch. This avoids
-  # requiring GitHub Releases permissions while retaining checksum verification.
   if download_direct "$BASE/$name" "$output"; then
     return 0
   fi
 
-  if [ -n "${USAGEMESH_RELEASE_BASE:-}" ]; then
-    echo "Failed to download $name from $BASE." >&2
-    exit 1
-  fi
-
-  # Optional compatibility path when a GitHub Release is also available.
-  if download_direct "$DEFAULT_RELEASE_BASE/$name" "$output"; then
-    return 0
-  fi
-  if download_with_gh "$name" "$output"; then
+  if [ -z "${USAGEMESH_RELEASE_BASE:-}" ] && download_with_gh "$name" "$output"; then
     return 0
   fi
 
-  echo "Failed to download $name from UsageMesh distribution or GitHub Releases." >&2
-  echo "Check network access to raw.githubusercontent.com and github.com, then retry." >&2
+  echo "Failed to download $name from GitHub Releases." >&2
+  echo "Check access to github.com or authenticate once with 'gh auth login', then retry." >&2
   exit 1
 }
 

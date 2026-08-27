@@ -332,10 +332,6 @@ const ACCESS_AAD_PREFIX = 'usagemesh-dashboard-access-v1:';
 const LEDGER_AAD_PREFIX = 'usagemesh-ledger-v2:';
 const REMEMBERED_WORKSPACE_KEY_PREFIX = 'usagemesh:remembered-workspace-key:v1:';
 
-function isBundledDemoRepo(repo: string): boolean {
-  return repo.toLowerCase() === DEFAULT_REPO.toLowerCase();
-}
-
 function rememberedWorkspaceStorageKey(repo: string): string {
   return `${REMEMBERED_WORKSPACE_KEY_PREFIX}${repo.toLowerCase()}`;
 }
@@ -440,10 +436,7 @@ async function json<T>(url: string): Promise<T> {
 }
 
 async function workspaceKey(repo: string, password: string): Promise<string> {
-  const accessUrl = isBundledDemoRepo(repo)
-    ? new URL('demo/access.json', document.baseURI).toString()
-    : `${RAW}/${repo}/${ACCESS_BRANCH}/access.json`;
-  const envelope = await json<AccessEnvelope>(accessUrl);
+  const envelope = await json<AccessEnvelope>(`${RAW}/${repo}/${ACCESS_BRANCH}/access.json`);
   if (
     envelope.kind !== 'usagemesh-dashboard-access' ||
     envelope.schemaVersion !== 1 ||
@@ -480,7 +473,6 @@ async function workspaceKey(repo: string, password: string): Promise<string> {
 
 async function loadDeviceIndex(repo: string): Promise<string[]> {
   const urls = [
-    ...(isBundledDemoRepo(repo) ? [new URL('demo/index.json', document.baseURI).toString()] : []),
     // The CLI updates this branch on every successful sync, so newly joined
     // devices become visible immediately without rebuilding GitHub Pages.
     `${RAW}/${repo}/${DEVICE_INDEX_BRANCH}/index.json`,
@@ -502,10 +494,7 @@ async function loadDeviceIndex(repo: string): Promise<string[]> {
 }
 
 async function decryptLedger(repo: string, branch: string, encodedKey: string): Promise<Ledger> {
-  const ledgerUrl = isBundledDemoRepo(repo)
-    ? new URL(`demo/${branch}.json`, document.baseURI).toString()
-    : `${RAW}/${repo}/${branch}/ledger.json`;
-  const envelope = await json<LedgerEnvelope>(ledgerUrl);
+  const envelope = await json<LedgerEnvelope>(`${RAW}/${repo}/${branch}/ledger.json`);
   if (envelope.kind !== 'usagemesh-encrypted-ledger' || envelope.schemaVersion !== 2) {
     throw new Error(`设备账本格式不受支持 (${branch})`);
   }
