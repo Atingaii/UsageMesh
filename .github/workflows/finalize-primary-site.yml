@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Remove demo mode and distribution dependency
+      - name: Remove demo mode and use GitHub Releases
         shell: bash
         run: |
           set -euo pipefail
@@ -84,45 +84,23 @@ jobs:
           if n != 1:
               raise SystemExit('install.ps1 download function not found')
           ps.write_text(text)
-
-          rel = Path('.github/workflows/release.yml')
-          text = rel.read_text()
-          text, n = re.subn(
-              r'\n      - name: Publish verified distribution branch\n.*?(?=\n      - name: Publish GitHub Release when repository policy permits)',
-              '', text, count=1, flags=re.S)
-          if n != 1:
-              raise SystemExit('distribution publish step not found')
-          text = text.replace('Publish GitHub Release when repository policy permits', 'Publish GitHub Release')
-          repo_expr = '$' + '{{ github.repository }}'
-          tag_expr = '$' + '{{ needs.publish.outputs.tag }}'
-          old_url = f'https://raw.githubusercontent.com/{repo_expr}/distribution/latest'
-          new_url = f'https://github.com/{repo_expr}/releases/download/{tag_expr}'
-          text = text.replace(old_url, new_url)
-          if 'distribution/latest' in text or 'Publish verified distribution branch' in text:
-              raise SystemExit('distribution dependency still present in release workflow')
-          rel.write_text(text)
-
-          marker = Path('.release/v2.0.0')
-          m = marker.read_text().replace('Distribution source: distribution/latest.', 'Distribution source: GitHub Release v2.0.0.')
-          marker.write_text(m)
           PY
-
           rm -rf web-ui/public/demo
 
-      - name: Validate clean production state
+      - name: Validate production source
         shell: bash
         run: |
           set -euo pipefail
           if grep -R -n "usagemesh-demo" README.md README.zh-CN.md web-ui/src web-ui/public; then exit 1; fi
           if grep -R -n "isBundledDemoRepo\|demo/access.json\|demo/index.json" web-ui/src/app.tsx; then exit 1; fi
-          if grep -R -n "distribution/latest" install.sh install.ps1 .github/workflows/release.yml .release/v2.0.0; then exit 1; fi
+          if grep -R -n "distribution/latest" install.sh install.ps1; then exit 1; fi
           sh -n install.sh
           cd web-ui
           npm install --no-audit --no-fund
           npm run typecheck
           npm run build
 
-      - name: Commit production cleanup and remove temporary branches
+      - name: Commit production source and delete extra branches
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -130,8 +108,7 @@ jobs:
           set -euo pipefail
           git config user.name 'UsageMesh Maintenance'
           git config user.email 'actions@users.noreply.github.com'
-          git rm .github/workflows/finalize-primary-site.yml
-          git add -A
+          git add -A README.md README.zh-CN.md install.sh install.ps1 web-ui
           git commit -m 'chore: make UsageMesh the primary password-owned dashboard'
           git push origin HEAD:main
           gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/distribution" >/dev/null 2>&1 || true
