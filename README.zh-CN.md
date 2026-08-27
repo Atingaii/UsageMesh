@@ -71,7 +71,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务，默认 **每 30 秒同步一次**。
+`setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务，默认 **每 30 秒同步一次**。新建或主动修改的 Dashboard 密码要求至少 12 个字符/字节；已有工作区升级后不会重置密码，原密码继续有效。
 
 第一次全量同步还会先把用户 Fork 的 `main` 自动同步到当前 `Atingaii/UsageMesh` 上游版本，再上传设备数据。因此即使用户很早以前就 Fork 过，也不需要再手工点击 GitHub 的 **Sync fork**。
 
@@ -87,11 +87,11 @@ usagemesh dashboard
 
 ## 无感自动更新
 
-从 **UsageMesh v2.0.2** 开始，正常同步本身就是升级机制。每一次 `usagemesh sync`——包括系统定时任务自动执行的后台同步——都会检查 GitHub 上最新的**稳定版** Release。发现新版本后，UsageMesh 会自动下载当前系统对应的发布包和 SHA-256 校验文件，完成校验，把用户自己的 Fork 同步到当前上游，然后原地替换 CLI，并自动继续本次同步。
+从 **UsageMesh v2.0.2** 开始，正常同步本身就是升级机制。系统定时任务执行 `usagemesh sync` 时会发现 GitHub 上最新的**稳定版** Release；如果存在新版本，UsageMesh 会自动下载当前系统对应的发布包和 SHA-256 校验文件，完成校验，把用户自己的 Fork 同步到当前上游，然后原地替换 CLI，并自动继续本次同步。
 
-对普通用户来说，最重要的是升级过程**不会重新初始化工作区**。仓库地址、工作区密钥、Dashboard 密码、设备 ID 和原先设置的同步间隔都保持不变。原来 15 分钟同步的机器升级后仍然是 15 分钟；原来 60 分钟的仍然是 60 分钟。正常情况下用户只需要第一次执行 `setup`，之后无需再主动管理版本。
+升级过程**不会重新初始化工作区**。仓库地址、工作区密钥、Dashboard 密码、设备 ID 和 GitHub 凭据都保持不变。当前正式版本对已安装定时任务统一采用 **30 秒近实时同步**；如果某台设备明确使用了 `--no-schedule`，升级也不会擅自为它创建定时任务。
 
-正式版本只有在 Linux x64/ARM64、macOS Intel/Apple Silicon、Windows x64/ARM64 六个平台全部完成构建、测试和安装冒烟测试以后，才会从候选 prerelease 提升为 `latest`。失败的候选版本不会被自动更新程序看到。
+正式版本只有在受支持平台完成构建、测试和安装冒烟测试以后，才会从候选 prerelease 提升为 `latest`。失败的候选版本不会被自动更新程序看到。
 
 如果受控环境不希望自动升级，可以设置 `USAGEMESH_AUTO_UPDATE=0`。重新运行最初的安装命令仍然保留为恢复手段；安装器检测到已有配置后会自动完成全量刷新，不再要求用户额外执行第二条升级命令。
 
@@ -146,16 +146,18 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 **概览**只保留适合第一眼判断状态的信息：总体用量、费用估算、趋势、设备与近期活动。
 
-**分析工作台**不再重复概览数字，而是新增近实时“请求明细”：展示每条可解析请求的具体时间、设备、客户端、模型、路由、速率/Tier、思考强度（来源有记录时）、输入/缓存/输出/Reasoning Tokens、耗时（来源有记录时）以及请求级费用估算；同时保留缓存命中率、TOP3 集中度、贡献分析、设备 × 模型矩阵和高消耗组合。
+**分析工作台**不再重复概览数字，而是提供近实时“请求明细”：展示每条可解析请求/用量事件的具体时间、设备、客户端、模型、路由、速率/Tier、输入/缓存/输出/Reasoning Tokens、耗时（来源有记录时）、请求级费用估算，以及**来源客户端明确记录的思考强度**。UsageMesh 会识别常见的 `reasoningEffort`、`reasoning.effort`、`thinkingLevel`、thinking/reasoning budget 等字段，并覆盖多个文本日志型客户端。若客户端本身没有记录该字段，UsageMesh 会继续显示 `—`，不会根据模型名或 Token 数猜测。
 
 ## 安全设计
 
-- Ledger：AES-256-GCM，上传前加密。
-- Dashboard 密码：不保存浏览器明文。
-- 浏览器刷新：解锁后的 workspace key 仅放在 `sessionStorage`；刷新不会掉登录，关闭浏览器会话后重新输入密码。
-- Pair Code：不含 GitHub PAT，但含 workspace key，必须保密。
-- GitHub PAT：不上传，只在设备本地用于同步。
-- URL：不放 workspace key、PAT 或 Dashboard 密码。
+- **Ledger 加密**：AES-256-GCM，上传前加密。
+- **随机工作区密钥**：实际设备账本由随机 256-bit workspace key 加密，Dashboard 密码只负责包装这把密钥。
+- **原密码兼容**：已有 v1 工作区即使使用早期 310,000 次 PBKDF2 参数，升级后仍可直接使用原来的 Dashboard 密码登录，不需要重置。
+- **新密码强化**：新建或主动修改密码使用 PBKDF2-HMAC-SHA256 **600,000 次** + 随机 salt + AES-256-GCM 包装。
+- **浏览器不持久化解密密钥**：解锁后的 workspace key 只保存在当前页面内存，不写入 `localStorage`、`sessionStorage`、IndexedDB、Cookie 或 URL；刷新或关闭页面后需要重新输入同一个密码。
+- **CSP**：静态 Dashboard 使用严格 Content Security Policy，脚本仅允许本站资源，网络连接限制到本站与 `raw.githubusercontent.com`，并禁用对象与表单提交；不加载第三方分析脚本。
+- **Pair Code**：不含 GitHub PAT，但含 workspace key，必须保密。
+- **GitHub PAT**：不上传，只在设备本地用于同步。
 
 不要把 PAT 写进命令行、README、Issue、截图或 Pair Code。为了让后台定时同步无需人工输入，手工粘贴的 GitHub 凭据会保存在本机 UsageMesh 配置中；Unix 下配置文件权限为 `0600`。建议使用**最小仓库权限 + 合理有效期**，并保护本机系统账号。
 
