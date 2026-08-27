@@ -1,0 +1,9 @@
+UsageMesh 2.3.0 official pricing and local route-evidence release.
+- Official upstream model price cards take precedence over generic catalogs.
+- GPT-5.6 pricing is effective-date aware, including the Sol Aug-21 promotion, Terra/Luna Jul-30 repricing, cache-write charges and long-context rules.
+- Standard requests never inherit Fast pricing; explicit API Fast/Priority requests use the official API Fast card rather than a blanket subscription multiplier.
+- Official route badges require locally observed base-URL/domain evidence; a provider name alone is not enough.
+- CodeBuddy reads ~/.codebuddy/settings.json, ~/.codebuddy/settings.local.json and CODEBUDDY_BASE_URL locally for route classification.
+- Raw endpoint/base URLs never leave the device; only normalized route labels/types are synced.
+- A pricing-policy upgrade forces one automatic full historical rescan/reprice on the next device sync.
+- Existing Dashboard passwords, secure browser session behavior and the 30-second scheduler remain unchanged.
