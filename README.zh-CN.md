@@ -73,6 +73,8 @@ usagemesh setup
 
 `setup` 会根据 GitHub 凭据识别你的账号，发现你自己的 `UsageMesh` Fork，询问 Dashboard 密码，完成第一次全量扫描，并安装系统原生的定时同步任务。
 
+第一次全量同步还会先把用户 Fork 的 `main` 自动同步到当前 `Atingaii/UsageMesh` 上游版本，再上传设备数据。因此即使用户很早以前就 Fork 过，也不需要再手工点击 GitHub 的 **Sync fork**。
+
 GitHub 凭据的读取顺序是：显式 `--token` → `USAGEMESH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN` → 已登录的 `gh auth token` → **终端隐藏输入 PAT**。普通用户无需使用 `--token`，避免把 Token 留在 Shell 历史中。
 
 ### 4. 打开自己的 Dashboard
@@ -82,6 +84,20 @@ usagemesh dashboard
 ```
 
 地址由实际 Fork 自动决定。例如账号为 `alice`、Fork 名仍为 `UsageMesh` 时，地址为 `https://alice.github.io/UsageMesh/`。如果 Fork 改名，使用 `usagemesh setup --repo OWNER/RENAMED_REPO` 初始化后，Dashboard 地址也会根据真实仓库名自动生成。
+
+### Dashboard 如何保持最新
+
+用户在 Fork 中启用 **Deploy Dashboard** 以后，每次部署都会直接使用当前 `Atingaii/UsageMesh` 上游的最新 Dashboard 源码，而不是盲目使用用户 Fork 里可能已经过期的 `web-ui` 副本。工作流还会**每天自动部署一次**，因此后续的网页修复可以自动进入用户自己的 GitHub Pages，不需要重新 Fork。
+
+部署后的站点会额外生成 `/build-info.json`，里面记录当前工作区仓库、Dashboard 上游仓库以及本次真正使用的上游 commit SHA。以后如果出现“网页明明设置正确但行为像旧版本”的问题，可以直接判断是否为旧部署，而不会误报成密码错误。
+
+已经安装过 UsageMesh 的设备，需要升级时重新运行安装命令，然后执行：
+
+```bash
+usagemesh sync --full
+```
+
+它会同时刷新本地历史统计、设备索引，并把 Fork 的源码同步到当前上游版本。
 
 ## 添加新设备
 
