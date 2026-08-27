@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime};
 use serde_json::Value;
 use tokscale_core::ClientId;
 use walkdir::WalkDir;
@@ -211,7 +211,7 @@ fn normalized_key(key: &str) -> String {
 }
 
 fn normalize_effort_label(raw: &str) -> Option<String> {
-    let cleaned = raw.trim().to_ascii_lowercase().replace(['_', ' '], "-");
+    let cleaned = raw.trim().to_ascii_lowercase().replace('_', "-").replace(' ', "-");
     let label = match cleaned.as_str() {
         "minimal" | "min" | "lowest" => "minimal",
         "low" | "lite" => "low",
@@ -663,12 +663,12 @@ mod tests {
         bundle.reasoning_efforts.insert(
             ("codebuddy".to_string(), "s-1".to_string()),
             vec![
-                EffortPoint { timestamp_ms: Some(1_000_000), effort: "low".to_string() },
-                EffortPoint { timestamp_ms: Some(1_010_000), effort: "high".to_string() },
+                EffortPoint { timestamp_ms: Some(1_000_000_000_000), effort: "low".to_string() },
+                EffortPoint { timestamp_ms: Some(1_000_000_010_000), effort: "high".to_string() },
             ],
         );
         assert_eq!(
-            reasoning_effort_for_message(&bundle, "codebuddy", "s-1", 1_011_000).as_deref(),
+            reasoning_effort_for_message(&bundle, "codebuddy", "s-1", 1_000_000_011_000).as_deref(),
             Some("high")
         );
     }

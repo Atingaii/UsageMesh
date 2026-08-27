@@ -240,7 +240,12 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
             route_type: identity.route_type.clone(),
             model: model.clone(),
             tier: None,
-            reasoning_effort: None,
+            reasoning_effort: evidence::reasoning_effort_for_message(
+                &route_evidence,
+                &client,
+                &message.session_id,
+                message.timestamp,
+            ),
             agent: message.agent.clone(),
             duration_ms: message.duration_ms.filter(|value| *value >= 0),
             cost_lower_bound,
