@@ -1,0 +1,1 @@
+{"schemaVersion":1,"kind":"usagemesh-dashboard-access","kdf":"PBKDF2-HMAC-SHA256","iterations":310000,"salt":"S6_umHYXafE0bfUpkP7jag","algorithm":"AES-256-GCM","nonce":"SvpfJygZ3mDTVZaq","ciphertext":"PMIcguNyUiCUGDRTLd19mC7cg8S4YBS7Iw1S8U8s41GR4LGXnhOpZ35tI18g_W-k97fzkod8BaTe_tA","updatedAt":"2026-08-27T07:55:00Z"}
