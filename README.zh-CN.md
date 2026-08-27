@@ -139,6 +139,10 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 Dashboard 展示的是**用量估算 / 订阅等价估算**，不是供应商发票，也不声称等于某个订阅后台的实际扣减。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
 
+## 友情链接
+
+开源技术和开发者交流，欢迎访问 [Linux DO](https://linux.do/)。
+
 ## License
 
 MIT，第三方来源与继承关系见 [NOTICE](NOTICE)。
