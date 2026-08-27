@@ -1,0 +1,122 @@
+name: Deploy Dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-ui/**'
+      - 'web/device-index.json'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+
+      - name: Prepare dashboard source
+        shell: bash
+        run: |
+          if [ ! -s web-ui/src/app.tsx ]; then
+            cat web-ui/src/app.part.* | base64 -d | gunzip > web-ui/src/app.tsx
+          fi
+          test -s web-ui/src/app.tsx
+          grep -q "FAST_SUBSCRIPTION_MULTIPLIER = 2.5" web-ui/src/app.tsx
+          grep -q "model_prices_and_context_window.json" web-ui/src/app.tsx
+
+      - name: Apply audited dashboard policies
+        working-directory: web-ui
+        run: |
+          python3 patch-pricing-policy.py
+          python3 patch-session-persistence.py
+          python3 patch-device-index.py
+          python3 patch-analytics-workbench.py
+          grep -q "subscriptionSpeedMultiplier" src/app.tsx
+          ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
+          grep -q "分析工作台" src/app.tsx
+          grep -q "结构贡献" src/app.tsx
+          grep -q "设备 × 模型用量矩阵" src/app.tsx
+          grep -q "高消耗组合" src/app.tsx
+          grep -q "TOP 3 集中度" src/app.tsx
+          ! grep -q "高级用量分析" src/app.tsx
+          ! grep -q "repoBadge={dataset.repo}" src/app.tsx
+          ! grep -q "pricingBadge={dataset.pricing.source}" src/app.tsx
+          grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
+          grep -q "loadDashboardWithKey" src/app.tsx
+          grep -q "const \[workspaceKeyValue, setWorkspaceKeyValue\]" src/app.tsx
+          grep -q "rememberWorkspaceKey(next.repo, key)" src/app.tsx
+          grep -q "forgetRememberedWorkspaceKey(repoFromLocation())" src/app.tsx
+          grep -q "正在恢复登录" src/app.tsx
+          grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
+          grep -q "DEVICE_INDEX_BRANCH}/index.json" src/app.tsx
+          ! grep -q "setPassword(nextPassword)" src/app.tsx
+          ! grep -q "loadDashboard(password)" src/app.tsx
+          test -s public/usagemesh-icon.svg
+
+      - name: Install dashboard dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck and build
+        working-directory: web-ui
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Add zero-API device index fallback
+        shell: bash
+        run: |
+          live_index="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/um-index/index.json"
+          if curl -fsSL --retry 2 "$live_index" -o web-ui/dist/device-index.json; then
+            echo "Using live um-index as the deployed fallback."
+          else
+            cp web/device-index.json web-ui/dist/device-index.json
+          fi
+          test -s web-ui/dist/device-index.json
+          test -s web-ui/dist/usagemesh-icon.svg
+
+      - name: Ensure GitHub Pages is enabled
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "GitHub Pages is not enabled yet; trying workflow-based Pages."
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" -f build_type=workflow >/dev/null 2>&1 || true
+          fi
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Enable Pages in Settings > Pages > Source: GitHub Actions, then rerun this workflow."
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-ui/dist
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
