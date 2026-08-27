@@ -87,19 +87,21 @@ usagemesh dashboard
 
 The URL is derived from the actual fork. For example, if the GitHub account is `alice` and the fork is still named `UsageMesh`, the URL is `https://alice.github.io/UsageMesh/`. If the fork was renamed, initialize with `usagemesh setup --repo OWNER/RENAMED_REPO`; the dashboard URL is then generated from that real repository name.
 
-### Dashboard freshness
+## Zero-touch updates
+
+Starting with **UsageMesh v2.0.2**, normal synchronization is also the update mechanism. Every `usagemesh sync` — including the scheduler-created background sync — checks the latest **stable** GitHub Release. If a newer version exists, UsageMesh downloads the platform-specific release archive and its SHA-256 checksum, verifies it, synchronizes the workspace fork with the current upstream, replaces the CLI in place, and resumes synchronization automatically.
+
+The important part for users is that upgrades do **not** recreate the workspace. The repository, workspace key, dashboard password, device identity and configured sync interval stay unchanged. A 15-minute device remains a 15-minute device; a 60-minute device remains a 60-minute device. Users configure UsageMesh once and normally never need to run `setup` again.
+
+Stable releases are only promoted to `latest` after the six supported platform builds and installer smoke tests pass. Failed candidates remain prereleases and are therefore ignored by automatic updates.
+
+Automatic updates can be disabled for controlled environments with `USAGEMESH_AUTO_UPDATE=0`. Re-running the original installer remains a recovery option; on an already configured machine the installer detects the workspace and performs the full refresh automatically, without requiring a second command.
+
+## Dashboard freshness
 
 Once **Deploy Dashboard** has been enabled in a fork, each deployment builds the dashboard from the current `Atingaii/UsageMesh` upstream source rather than trusting a potentially stale copy of `web-ui` in the fork. The workflow also runs once per day, so an existing user's Pages site keeps receiving current dashboard fixes without requiring a new fork.
 
 The deployed site includes `/build-info.json` with the workspace repository and the exact upstream dashboard commit used for that build. This makes stale-deployment problems diagnosable instead of silently looking like a password or data error.
-
-For an existing installation, rerun the installer to get the latest CLI and then run:
-
-```bash
-usagemesh sync --full
-```
-
-That refreshes both the local accounting snapshot and the fork's upstream source.
 
 ## Add another device
 
