@@ -23,7 +23,7 @@ jobs:
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
       - name: Apply migration
-        run: python3 scripts/apply-v220.py
+        run: python3 scripts/run-v220.py
       - name: Rust tests
         run: cargo test --workspace --all-targets
       - name: Dashboard typecheck and build
