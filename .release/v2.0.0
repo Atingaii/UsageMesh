@@ -1,4 +1,3 @@
 UsageMesh 2.0.0 clean standalone release.
 Trigger the six-platform release and installer smoke matrix.
-Distribution source: distribution/latest.
-Republish after artifact-preservation fix.
+Distribution source: GitHub Release v2.0.0.
