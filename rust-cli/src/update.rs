@@ -1,7 +1,8 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use reqwest::blocking::Client;
@@ -13,6 +14,44 @@ use crate::config::Config;
 use crate::github::{GithubClient, UPSTREAM_REPO};
 
 const API_VERSION: &str = "2022-11-28";
+const UPDATE_LOCK_STALE_AFTER: Duration = Duration::from_secs(15 * 60);
+
+struct UpdateLock {
+    path: PathBuf,
+}
+
+impl Drop for UpdateLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_update_lock() -> Result<Option<UpdateLock>> {
+    let path = crate::config::config_dir()?.join("update.lock");
+    for attempt in 0..2 {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => return Ok(Some(UpdateLock { path })),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .is_some_and(|age| age > UPDATE_LOCK_STALE_AFTER);
+                if stale && attempt == 0 {
+                    let _ = fs::remove_file(&path);
+                    continue;
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(None)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoUpdateOutcome {
@@ -257,7 +296,7 @@ fn replace_and_restart(staged: &Path, current: &Path, full: bool, quiet: bool) -
         .context("cannot stage the UsageMesh update beside the current executable")?;
 
     let mut command = format!(
-        "$parentPid={parent}; while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; Move-Item -Force -LiteralPath {} -Destination {}; & {} sync",
+        "$parentPid={parent}; while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; Move-Item -Force -LiteralPath {} -Destination {}; $env:USAGEMESH_UPDATE_RESUME='1'; & {} sync",
         ps_quote(&adjacent),
         ps_quote(current),
         ps_quote(current)
@@ -309,6 +348,7 @@ fn replace_and_restart(staged: &Path, current: &Path, full: bool, quiet: bool) -
 
     let status = Command::new(current)
         .args(sync_args(full, quiet))
+        .env("USAGEMESH_UPDATE_RESUME", "1")
         .status()
         .context("failed to restart UsageMesh after updating")?;
     if !status.success() {
@@ -329,6 +369,13 @@ pub fn maybe_auto_update(config: &Config, full: bool, quiet: bool) -> Result<Aut
     if !is_newer(latest, current) {
         return Ok(AutoUpdateOutcome::Current);
     }
+
+    // A 30-second scheduler can launch another copy while a large release is
+    // still downloading. Only one process may replace/restart the executable;
+    // overlapping ticks continue with their normal non-blocking sync behavior.
+    let Some(_update_lock) = acquire_update_lock()? else {
+        return Ok(AutoUpdateOutcome::Current);
+    };
 
     // A release is also the synchronization point for fork-owned source/workflows.
     // This keeps the user's Pages workflow current before the new binary resumes.

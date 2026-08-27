@@ -14,7 +14,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration as StdDuration, SystemTime};
+use std::time::{Duration as StdDuration, Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use chrono::{Duration, Local};
@@ -187,12 +187,16 @@ impl Drop for SyncLock {
     }
 }
 
-fn acquire_sync_lock() -> Result<Option<SyncLock>> {
-    let path = config::config_dir()?.join("sync.lock");
+const SYNC_LOCK_WAIT_TIMEOUT: StdDuration = StdDuration::from_secs(10 * 60);
+const SYNC_LOCK_RETRY_INTERVAL: StdDuration = StdDuration::from_millis(250);
+
+fn acquire_sync_lock_at(path: PathBuf, wait: bool, quiet: bool) -> Result<Option<SyncLock>> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    for attempt in 0..2 {
+    let started = Instant::now();
+    let mut announced_wait = false;
+    loop {
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -205,16 +209,26 @@ fn acquire_sync_lock() -> Result<Option<SyncLock>> {
                     .ok()
                     .and_then(|modified| SystemTime::now().duration_since(modified).ok())
                     .is_some_and(|age| age > StdDuration::from_secs(15 * 60));
-                if stale && attempt == 0 {
+                if stale {
                     let _ = fs::remove_file(&path);
                     continue;
                 }
-                return Ok(None);
+                if !wait || started.elapsed() >= SYNC_LOCK_WAIT_TIMEOUT {
+                    return Ok(None);
+                }
+                if !quiet && !announced_wait {
+                    println!("Another UsageMesh sync is running; waiting for it to finish...");
+                    announced_wait = true;
+                }
+                std::thread::sleep(SYNC_LOCK_RETRY_INTERVAL);
             }
             Err(error) => return Err(error.into()),
         }
     }
-    Ok(None)
+}
+
+fn acquire_sync_lock(wait: bool, quiet: bool) -> Result<Option<SyncLock>> {
+    acquire_sync_lock_at(config::config_dir()?.join("sync.lock"), wait, quiet)
 }
 
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
@@ -261,11 +275,15 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         config::save(&config).context("failed to persist the 30-second sync cadence")?;
     }
 
-    let _sync_lock = match acquire_sync_lock()? {
+    // Interactive syncs wait instead of telling users to stop a daemon that does
+    // not exist. A restarted updater also waits, including when its originating
+    // scheduled tick was quiet; ordinary overlapping scheduler ticks still skip.
+    let wait_for_lock = !quiet || std::env::var_os("USAGEMESH_UPDATE_RESUME").is_some();
+    let _sync_lock = match acquire_sync_lock(wait_for_lock, quiet)? {
         Some(lock) => lock,
         None => {
             if !quiet {
-                println!("Another UsageMesh sync is still running; skipping this tick.");
+                println!("Another UsageMesh sync did not finish within 10 minutes; the native scheduler will retry automatically.");
             }
             return Ok(());
         }
@@ -554,5 +572,30 @@ mod tests {
     fn short_dashboard_password_is_rejected_for_new_manifests() {
         assert!(validate_dashboard_password("12345678").is_err());
         assert!(validate_dashboard_password("correct-horse-battery").is_ok());
+    }
+
+    #[test]
+    fn interactive_sync_waits_for_an_existing_lock() {
+        let root = std::env::temp_dir().join(format!(
+            "usagemesh-lock-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = root.join("sync.lock");
+        let first = acquire_sync_lock_at(path.clone(), false, true)
+            .unwrap()
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(StdDuration::from_millis(100));
+            drop(first);
+        });
+        let second = acquire_sync_lock_at(path, true, true).unwrap();
+        release.join().unwrap();
+        assert!(second.is_some());
+        drop(second);
+        let _ = fs::remove_dir_all(root);
     }
 }
