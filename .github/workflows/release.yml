@@ -122,8 +122,6 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Resolve release tag
         id: version
         shell: bash
@@ -135,49 +133,21 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-
-      - name: Publish verified distribution branch
-        env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/usagemesh-dist
-          mkdir -p /tmp/usagemesh-dist
-          cp -a dist/. /tmp/usagemesh-dist/
-          test -n "$(find /tmp/usagemesh-dist -maxdepth 1 -type f -print -quit)"
-          git config user.name 'UsageMesh Release'
-          git config user.email 'actions@users.noreply.github.com'
-          git checkout --orphan usagemesh-distribution
-          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          mkdir -p latest
-          cp -a /tmp/usagemesh-dist/. latest/
-          printf '%s\n' "$RELEASE_TAG" > VERSION
-          printf '%s\n' 'UsageMesh verified binary distribution. Files in latest/ are SHA-256 checked by the installers.' > README.txt
-          git add -A
-          git commit -m "distribution: ${RELEASE_TAG}"
-          git push --force origin HEAD:distribution
-
-      - name: Publish GitHub Release when repository policy permits
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" /tmp/usagemesh-dist/* --clobber
+            gh release upload "$RELEASE_TAG" dist/* --clobber
           else
-            gh release create "$RELEASE_TAG" /tmp/usagemesh-dist/* \
+            gh release create "$RELEASE_TAG" dist/* \
               --target "$GITHUB_SHA" \
               --generate-notes \
               --title "$RELEASE_TAG"
           fi
-          rc=$?
-          if [ "$rc" -ne 0 ]; then
-            echo "::warning::GitHub Releases API is unavailable to this workflow token. The verified distribution branch was published successfully and remains the primary installer source."
-          fi
-          exit 0
 
   verify-install:
     name: Install smoke / ${{ matrix.label }}
@@ -201,11 +171,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install from verified distribution (Unix)
+      - name: Install from GitHub Release (Unix)
         if: runner.os != 'Windows'
         shell: bash
         env:
-          USAGEMESH_RELEASE_BASE: https://raw.githubusercontent.com/${{ github.repository }}/distribution/latest
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
           EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: |
           export USAGEMESH_INSTALL_DIR="$RUNNER_TEMP/usagemesh-bin"
@@ -213,11 +183,11 @@ jobs:
           expected="${EXPECTED_TAG#v}"
           "$USAGEMESH_INSTALL_DIR/usagemesh" --version | grep -F "$expected"
           "$USAGEMESH_INSTALL_DIR/usagemesh" clients >/dev/null
-      - name: Install from verified distribution (Windows PowerShell 7)
+      - name: Install from GitHub Release (Windows PowerShell 7)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          USAGEMESH_RELEASE_BASE: https://raw.githubusercontent.com/${{ github.repository }}/distribution/latest
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
           EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: |
           $env:USAGEMESH_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'usagemesh-bin-pwsh'
@@ -228,11 +198,11 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $version -notmatch [regex]::Escape($expected)) { throw "Unexpected version: $version" }
           & $binary clients | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }
-      - name: Install from verified distribution (Windows PowerShell 5.1)
+      - name: Install from GitHub Release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: cmd
         env:
-          USAGEMESH_RELEASE_BASE: https://raw.githubusercontent.com/${{ github.repository }}/distribution/latest
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
           EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
         run: >-
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command
