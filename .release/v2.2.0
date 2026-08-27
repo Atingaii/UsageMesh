@@ -1,0 +1,7 @@
+UsageMesh v2.2.0
+
+- Harden dashboard secret handling: workspace keys stay only in page memory.
+- Preserve existing dashboard passwords and legacy 310k PBKDF2 access manifests.
+- Use 600k PBKDF2 for new or explicitly changed dashboard passwords.
+- Add restrictive CSP and referrer policy for the static dashboard.
+- Recover explicit reasoning/thinking effort metadata across supported text-based clients without guessing.
