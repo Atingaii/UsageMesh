@@ -154,7 +154,7 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 - **随机工作区密钥**：实际设备账本由随机 256-bit workspace key 加密，Dashboard 密码只负责包装这把密钥。
 - **原密码兼容**：已有 v1 工作区即使使用早期 310,000 次 PBKDF2 参数，升级后仍可直接使用原来的 Dashboard 密码登录，不需要重置。
 - **新密码强化**：新建或主动修改密码使用 PBKDF2-HMAC-SHA256 **600,000 次** + 随机 salt + AES-256-GCM 包装。
-- **浏览器不持久化解密密钥**：解锁后的 workspace key 只保存在当前页面内存，不写入 `localStorage`、`sessionStorage`、IndexedDB、Cookie 或 URL；刷新或关闭页面后需要重新输入同一个密码。
+- **浏览器安全会话**：Dashboard 密码本身从不持久化；workspace key 只以 AES-GCM 密文形式保存在当前标签页的 `sessionStorage`，对应的随机包装密钥以不可导出的 WebCrypto `CryptoKey` 存入 IndexedDB。普通刷新可自动恢复；闲置 30 分钟、12 小时绝对期限、手动锁定或关闭标签页后需要重新输入原密码。
 - **CSP**：静态 Dashboard 使用严格 Content Security Policy，脚本仅允许本站资源，网络连接限制到本站与 `raw.githubusercontent.com`，并禁用对象与表单提交；不加载第三方分析脚本。
 - **Pair Code**：不含 GitHub PAT，但含 workspace key，必须保密。
 - **GitHub PAT**：不上传，只在设备本地用于同步。
@@ -165,7 +165,7 @@ Dashboard 的静态资源使用相对路径，因此 Fork 改名后也不会依�
 
 ## 费用口径
 
-Dashboard 展示的是**用量估算 / 订阅等价估算**，不是供应商发票，也不声称等于某个订阅后台的实际扣减。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
+Dashboard 展示的是**API 等价美元费用估算**，不是供应商发票，也不把 Fast / Priority 的订阅额度倍率混入美元费用。具体规则从主 README 中移出，统一放在 [docs/PRICING.md](docs/PRICING.md)。
 
 ## 友情链接
 

@@ -18,9 +18,11 @@ PBKDF2 raises the cost of password guessing but cannot make a weak password stro
 
 ## Browser session
 
-The dashboard never persists the plaintext password. After a successful unlock, the decrypted workspace key is kept only in the current page's JavaScript memory. It is **not** written to `localStorage`, `sessionStorage`, IndexedDB, the URL, cookies, or GitHub.
+The dashboard never persists the plaintext password. After a successful unlock, UsageMesh creates a same-tab secure-resume envelope: the workspace key is encrypted with a fresh non-extractable AES-GCM `CryptoKey`; only the ciphertext, IV, repository identity, key identifier and timestamps are placed in `sessionStorage`, while the non-extractable wrapping key is stored through IndexedDB structured cloning. The plaintext workspace key is never written to `localStorage`, `sessionStorage`, IndexedDB, cookies, the URL or GitHub.
 
-Refreshing, closing, or recreating the page therefore requires the same dashboard password again. The manual **Lock** action also discards the in-memory key immediately.
+This allows an ordinary refresh in the same tab to restore the unlocked session without asking for the password again. The session automatically expires after 30 minutes of inactivity or 12 hours absolute lifetime. Manual **Lock** clears the session envelope and deletes the wrapping key. Closing the tab clears the `sessionStorage` handle, so a new tab requires the original dashboard password again.
+
+A non-extractable browser key is defense in depth, not an HttpOnly server session: JavaScript already executing in the trusted dashboard origin while it is unlocked can ask WebCrypto to use that key. The restrictive CSP and absence of third-party runtime scripts therefore remain part of the security boundary.
 
 The static dashboard ships a restrictive Content Security Policy: scripts must come from the deployed site itself; network connections are limited to the site and `raw.githubusercontent.com`; objects and form submission are disabled; and referrer data is suppressed. UsageMesh does not load third-party analytics or third-party JavaScript at runtime.
 

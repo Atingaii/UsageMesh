@@ -30,7 +30,12 @@ struct ReleaseInfo {
 fn disabled() -> bool {
     std::env::var("USAGEMESH_AUTO_UPDATE")
         .ok()
-        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -41,7 +46,10 @@ fn parse_version(value: &str) -> Option<Vec<u64>> {
     }
     let mut out = Vec::new();
     for part in raw.split('.') {
-        let digits = part.chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>();
+        let digits = part
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
         if digits.is_empty() {
             return None;
         }
@@ -66,9 +74,7 @@ fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 fn http_client() -> Result<Client> {
-    Ok(Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()?)
+    Ok(Client::builder().timeout(Duration::from_secs(20)).build()?)
 }
 
 fn latest_stable_release(client: &Client, token: &str) -> Result<ReleaseInfo> {
@@ -81,7 +87,9 @@ fn latest_stable_release(client: &Client, token: &str) -> Result<ReleaseInfo> {
     if !token.trim().is_empty() {
         request = request.header(AUTHORIZATION, format!("Bearer {}", token.trim()));
     }
-    let response = request.send().context("failed to check the latest UsageMesh release")?;
+    let response = request
+        .send()
+        .context("failed to check the latest UsageMesh release")?;
     if !response.status().is_success() {
         bail!("latest release check returned HTTP {}", response.status());
     }
@@ -99,9 +107,30 @@ fn platform_asset() -> Result<(&'static str, &'static str)> {
         other => bail!("automatic update is not supported on architecture {other}"),
     };
     match std::env::consts::OS {
-        "linux" => Ok((if arch == "x86_64" { "usagemesh-linux-x86_64" } else { "usagemesh-linux-aarch64" }, "tar.gz")),
-        "macos" => Ok((if arch == "x86_64" { "usagemesh-macos-x86_64" } else { "usagemesh-macos-aarch64" }, "tar.gz")),
-        "windows" => Ok((if arch == "x86_64" { "usagemesh-windows-x86_64" } else { "usagemesh-windows-aarch64" }, "zip")),
+        "linux" => Ok((
+            if arch == "x86_64" {
+                "usagemesh-linux-x86_64"
+            } else {
+                "usagemesh-linux-aarch64"
+            },
+            "tar.gz",
+        )),
+        "macos" => Ok((
+            if arch == "x86_64" {
+                "usagemesh-macos-x86_64"
+            } else {
+                "usagemesh-macos-aarch64"
+            },
+            "tar.gz",
+        )),
+        "windows" => Ok((
+            if arch == "x86_64" {
+                "usagemesh-windows-x86_64"
+            } else {
+                "usagemesh-windows-aarch64"
+            },
+            "zip",
+        )),
         other => bail!("automatic update is not supported on {other}"),
     }
 }
@@ -149,7 +178,14 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<PathBuf> {
             ps_quote(destination)
         );
         let status = Command::new("powershell.exe")
-            .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &command])
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &command,
+            ])
             .status()
             .context("failed to start PowerShell for update extraction")?;
         if !status.success() {
@@ -217,7 +253,8 @@ fn replace_and_restart(staged: &Path, current: &Path, full: bool, quiet: bool) -
     let parent = std::process::id();
     let adjacent = current.with_extension("update.exe");
     let _ = fs::remove_file(&adjacent);
-    fs::copy(staged, &adjacent).context("cannot stage the UsageMesh update beside the current executable")?;
+    fs::copy(staged, &adjacent)
+        .context("cannot stage the UsageMesh update beside the current executable")?;
 
     let mut command = format!(
         "$parentPid={parent}; while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; Move-Item -Force -LiteralPath {} -Destination {}; & {} sync",
@@ -233,10 +270,27 @@ fn replace_and_restart(staged: &Path, current: &Path, full: bool, quiet: bool) -
     }
 
     Command::new("powershell.exe")
-        .args(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", &command])
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &command,
+        ])
         .stdin(Stdio::null())
-        .stdout(if quiet { Stdio::null() } else { Stdio::inherit() })
-        .stderr(if quiet { Stdio::null() } else { Stdio::inherit() })
+        .stdout(if quiet {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
+        .stderr(if quiet {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()
         .context("failed to schedule the Windows UsageMesh self-update")?;
     Ok(())
@@ -248,7 +302,8 @@ fn replace_and_restart(staged: &Path, current: &Path, full: bool, quiet: bool) -
 
     let adjacent = current.with_file_name(format!(".usagemesh-update-{}", std::process::id()));
     let _ = fs::remove_file(&adjacent);
-    fs::copy(staged, &adjacent).context("cannot stage the UsageMesh update beside the current executable")?;
+    fs::copy(staged, &adjacent)
+        .context("cannot stage the UsageMesh update beside the current executable")?;
     fs::set_permissions(&adjacent, fs::Permissions::from_mode(0o755))?;
     fs::rename(&adjacent, current).context("cannot atomically replace the UsageMesh executable")?;
 
@@ -289,9 +344,11 @@ pub fn maybe_auto_update(config: &Config, full: bool, quiet: bool) -> Result<Aut
         release.tag_name
     );
 
-    let update_dir = crate::config::config_dir()?
-        .join("updates")
-        .join(format!("{}-{}", latest, std::process::id()));
+    let update_dir = crate::config::config_dir()?.join("updates").join(format!(
+        "{}-{}",
+        latest,
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&update_dir);
     fs::create_dir_all(&update_dir)?;
     let archive = update_dir.join(&archive_name);
@@ -309,7 +366,8 @@ pub fn maybe_auto_update(config: &Config, full: bool, quiet: bool) -> Result<Aut
         println!("Verified SHA-256; installing the stable GitHub Release now...");
     }
 
-    let current_exe = std::env::current_exe().context("cannot locate the running UsageMesh executable")?;
+    let current_exe =
+        std::env::current_exe().context("cannot locate the running UsageMesh executable")?;
     replace_and_restart(&staged, &current_exe, full, quiet)?;
     let _ = fs::remove_dir_all(&update_dir);
     Ok(AutoUpdateOutcome::Restarted)

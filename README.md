@@ -164,7 +164,7 @@ No client-side system can promise “absolute security.” UsageMesh instead min
 
 ## Cost semantics
 
-Dashboard cost values are **usage estimates / subscription-equivalent estimates**, not provider invoices and not a promise about a subscription's internal quota accounting. Model-specific rules are kept out of onboarding docs; see [docs/PRICING.md](docs/PRICING.md).
+Dashboard cost values are **usage estimates / API-equivalent cost estimates**, not provider invoices and not a promise about a subscription's internal quota accounting. Model-specific rules are kept out of onboarding docs; see [docs/PRICING.md](docs/PRICING.md).
 
 ## Development
 

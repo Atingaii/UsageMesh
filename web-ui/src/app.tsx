@@ -349,7 +349,7 @@ async function applyDynamicPricing(records: UsageRecord[]): Promise<PricingStatu
     source: 'UsageMesh ledger · CC Switch compatible / models.dev',
     sourceUrl: LEDGER_PRICING_SOURCE_URL,
     updatedAt: null,
-    fastMultiplier: 2.5,
+    fastMultiplier: 1.0,
     resolvedRows,
     fallbackRows,
   };
@@ -863,13 +863,13 @@ const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock, error }) => {
             <div className="w-9 h-9 rounded-full bg-[var(--accent-blue-light)] border border-[var(--accent-blue-border)] flex items-center justify-center text-[var(--accent-blue)]"><Lock className="w-4 h-4" /></div>
           </div>
           <h2 className="text-xl font-semibold tracking-tight text-[var(--text-primary)] mb-1">打开 UsageMesh</h2>
-          <p className="text-xs text-[var(--text-muted)] leading-relaxed mb-6">输入原来的 Dashboard 密码即可。密码只在当前页面参与 PBKDF2 + AES-GCM 解密；解密后的工作区密钥只保留在页面内存，刷新或关闭页面后需要重新输入密码。</p>
+          <p className="text-xs text-[var(--text-muted)] leading-relaxed mb-6">输入原来的 Dashboard 密码即可。密码只在当前页面参与 PBKDF2 + AES-GCM 解密且不会持久化。登录后会建立同一标签页的加密安全会话：普通刷新可自动恢复；闲置 30 分钟、会话超过 12 小时、手动锁定或关闭标签页后需要重新输入密码。</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div><label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">Dashboard Password</label><div className="relative"><input type="password" autoComplete="current-password" spellCheck={false} autoCapitalize="none" value={password} onChange={e => setPassword(e.target.value)} placeholder="输入 Dashboard 密码" className="w-full bg-[var(--bg-main)] text-[var(--text-primary)] text-sm border border-[var(--border-color)] rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-[var(--accent-blue)] transition font-mono pr-10" autoFocus /><KeyRound className="absolute right-3 top-3 w-4 h-4 text-[var(--text-muted)]" /></div></div>
             {error && <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs"><ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" /><div><div className="font-semibold">{error}</div><div className="text-[11px] opacity-90 mt-0.5">{error.includes('密码') ? '请确认输入的是设备端 usagemesh password 设置的密码。' : '页面只读取公开仓库中的加密快照；请稍后刷新或检查设备是否完成同步。'}</div></div></div>}
             <button type="submit" disabled={loading || password.length < 8} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent-blue)] text-white text-sm font-medium hover:bg-blue-600 active:scale-[0.99] transition cursor-pointer disabled:opacity-50 shadow-sm">{loading ? <><RefreshCw className="w-4 h-4 animate-spin" /><span>正在解密并读取数据…</span></> : <><span>进入 Dashboard</span><ArrowRight className="w-4 h-4" /></>}</button>
           </form>
-          <div className="mt-6 pt-4 border-t border-[var(--border-subtle)] text-center text-xs text-[var(--text-muted)]">使用设备设置的 Dashboard 密码即可从任意浏览器访问。</div>
+          <div className="mt-6 pt-4 border-t border-[var(--border-subtle)] text-center text-xs text-[var(--text-muted)]">同一标签页刷新无需重复输入；关闭标签页或安全会话过期后仍需使用原 Dashboard 密码。</div>
         </div>
       </main>
       <footer className="text-center text-xs text-[var(--text-muted)] py-2 font-mono">UsageMesh · Local PBKDF2 + AES-256-GCM Decryption</footer>
@@ -977,7 +977,7 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
   const fmt = (num: number) => Math.round(num).toLocaleString('en-US');
   const kpis = [
     { id: 'total', title: '总 Tokens', value: fmt(totalTokens), subtext: '当前筛选范围', icon: Cpu, highlight: false },
-    { id: 'cost', title: '订阅等价费用', value: `$${cost.toFixed(4)}`, subtext: '统一账本估算', icon: Coins, highlight: true, info: false },
+    { id: 'cost', title: '估算费用', value: `$${cost.toFixed(4)}`, subtext: '统一账本估算', icon: Coins, highlight: true, info: false },
     { id: 'input', title: '输入 Tokens', value: fmt(inputTokens), subtext: 'Fresh input', icon: ArrowDownRight, highlight: false },
     { id: 'cache', title: '缓存读取', value: fmt(cacheReadTokens), subtext: 'Cache read', icon: Database, highlight: false },
     { id: 'output', title: '输出 Tokens', value: fmt(outputTokens), subtext: 'Output', icon: ArrowUpRight, highlight: false },
@@ -999,12 +999,12 @@ const KpiCards: React.FC<KpiCardsProps> = ({ totalTokens, cost, inputTokens, cac
         <div className="text-xs space-y-3 text-[var(--text-secondary)] font-mono">
           <div className="grid grid-cols-[120px_1fr] gap-2 bg-[var(--bg-main)] p-3 rounded-lg border border-[var(--border-color)]">
             <span className="text-[var(--text-muted)]">Pricing source</span><span className="font-semibold text-[var(--text-primary)]">{pricing.source}</span>
-            <span className="text-[var(--text-muted)]">Fast mode</span><span className="font-semibold text-[var(--accent-blue)]">{pricing.fastMultiplier.toFixed(1)}× Standard</span>
+            <span className="text-[var(--text-muted)]">USD Tier multiplier</span><span className="font-semibold text-[var(--accent-blue)]">1.0×（速率不改变美元估算）</span>
             <span className="text-[var(--text-muted)]">已解析</span><span>{pricing.resolvedRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">Fallback</span><span>{pricing.fallbackRows.toLocaleString()} rows</span>
             <span className="text-[var(--text-muted)]">价格更新时间</span><span>{pricing.updatedAt ? new Date(pricing.updatedAt).toLocaleString() : '随设备快照更新'}</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 的订阅等价口径按 2.5× Standard 处理。</p>
+          <p className="text-[11px] leading-relaxed text-[var(--text-muted)]">费用直接使用设备端逐请求计算后写入加密账本的结果，避免浏览器对聚合行二次计价造成偏差。设备端计价与 CC Switch 口径兼容，通用模型目录来自 models.dev；GPT-5.6 Sol 审计基准为每 1M Tokens：输入 $5.00、Cache Read $0.50、Cache Write $6.25、输出 $30.00。Fast / Priority 只作为速率/Tier 元数据保留，不再乘进美元费用；这样网站与设备端统一账本保持同一 API 等价计费口径。</p>
           <a href={pricing.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[var(--accent-blue)] hover:underline">查看 models.dev 模型目录 <ExternalLink className="w-3 h-3" /></a>
         </div>
         <button onClick={() => setShowPricingModal(false)} className="w-full py-1.5 rounded-lg bg-[var(--accent-blue)] text-white text-xs font-medium cursor-pointer">关闭说明</button>
@@ -1051,7 +1051,7 @@ const TrendChart: React.FC<TrendChartProps> = ({ isDarkMode, data }) => {
     return <div className="bg-slate-950/95 text-slate-100 text-xs p-3 rounded-xl border border-slate-800 shadow-2xl space-y-1.5 font-mono min-w-[220px] z-50">
       <div className="text-[11px] text-slate-400 font-semibold border-b border-slate-800 pb-1 flex justify-between"><span>日期</span><span className="text-blue-400">{d.date}</span></div>
       <div className="flex justify-between gap-4"><span className="text-slate-400">总 Tokens</span><span className="font-bold text-white">{Math.round(d.totalTokens).toLocaleString()}</span></div>
-      <div className="flex justify-between gap-4 text-emerald-400"><span>订阅等价费用</span><span className="font-bold">${d.cost.toFixed(4)}</span></div>
+      <div className="flex justify-between gap-4 text-emerald-400"><span>估算费用</span><span className="font-bold">${d.cost.toFixed(4)}</span></div>
       <div className="flex justify-between gap-4 text-blue-400"><span>输入 Tokens</span><span>{Math.round(d.inputTokens).toLocaleString()}</span></div>
       <div className="flex justify-between gap-4 text-indigo-400"><span>缓存读取</span><span>{Math.round(d.cacheReadTokens).toLocaleString()}</span></div>
       <div className="flex justify-between gap-4 text-slate-400"><span>缓存写入</span><span>{Math.round(d.cacheWriteTokens).toLocaleString()}</span></div>
@@ -1129,6 +1129,14 @@ const BreakdownCards: React.FC<BreakdownCardsProps> = ({ records }) => {
   </div>;
 };
 
+
+function deviceStatusBadge(status: DeviceInfo['status']) {
+  if (status === 'online') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />在线</span>;
+  if (status === 'syncing') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />最近同步</span>;
+  if (status === 'error') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />异常</span>;
+  return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-slate-400" />离线</span>;
+}
+
 interface DevicesViewProps { devices: DeviceInfo[]; }
 
 const DevicesView: React.FC<DevicesViewProps> = ({ devices }) => (
@@ -1138,8 +1146,8 @@ const DevicesView: React.FC<DevicesViewProps> = ({ devices }) => (
       <div className="px-3 py-1.5 rounded-lg bg-[var(--bg-main)] border border-[var(--border-color)] text-xs font-mono text-[var(--text-secondary)]">Command: <code className="text-[var(--accent-blue)] font-bold">usagemesh sync</code></div>
     </div>
     <div className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl shadow-2xs overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-left text-xs">
-      <thead className="bg-[var(--bg-main)] text-[var(--text-muted)] font-mono uppercase tracking-wider border-b border-[var(--border-color)]"><tr><th className="px-4 py-3">设备名称</th><th className="px-4 py-3">平台</th><th className="px-4 py-3">架构</th><th className="px-4 py-3">最近同步</th><th className="px-4 py-3 text-right">Tokens 用量</th><th className="px-4 py-3 text-right">订阅等价费用</th><th className="px-4 py-3 text-right">请求数</th><th className="px-4 py-3 text-right">用量占比</th><th className="px-4 py-3 text-center">状态</th></tr></thead>
-      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{devices.map(dev => <tr key={dev.id} className="hover:bg-[var(--bg-card-hover)] transition"><td className="px-4 py-3 font-semibold text-[var(--text-primary)]"><div className="flex items-center gap-2"><Monitor className="w-4 h-4 text-[var(--accent-blue)]" /><span>{dev.name}</span></div></td><td className="px-4 py-3 text-[var(--text-secondary)]"><span className="font-sans font-medium">{dev.platform}</span></td><td className="px-4 py-3 text-[var(--text-muted)]"><span className="px-2 py-0.5 rounded bg-[var(--bg-main)] border border-[var(--border-color)] text-[10px]">{dev.architecture}</span></td><td className="px-4 py-3 text-[var(--text-muted)]"><div className="flex items-center gap-1"><Clock className="w-3 h-3 text-emerald-500" /><span>{dev.lastSync}</span></div></td><td className="px-4 py-3 text-right font-bold text-[var(--text-primary)]">{Math.round(dev.totalTokens).toLocaleString()}</td><td className="px-4 py-3 text-right font-bold text-emerald-600">${dev.cost.toFixed(4)}</td><td className="px-4 py-3 text-right text-[var(--text-secondary)]">{dev.requestsCount.toLocaleString()}</td><td className="px-4 py-3 text-right"><div className="inline-flex items-center gap-1.5"><div className="w-12 h-1.5 bg-[var(--bg-main)] rounded-full overflow-hidden"><div className="h-full bg-[var(--accent-blue)] rounded-full" style={{width:`${dev.sharePercentage}%`}} /></div><span className="font-bold text-[var(--text-primary)]">{dev.sharePercentage.toFixed(1)}%</span></div></td><td className="px-4 py-3 text-center"><span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />在线已同步</span></td></tr>)}{!devices.length && <tr><td colSpan={9} className="px-4 py-12 text-center text-[var(--text-muted)]">暂无设备数据</td></tr>}</tbody>
+      <thead className="bg-[var(--bg-main)] text-[var(--text-muted)] font-mono uppercase tracking-wider border-b border-[var(--border-color)]"><tr><th className="px-4 py-3">设备名称</th><th className="px-4 py-3">平台</th><th className="px-4 py-3">架构</th><th className="px-4 py-3">最近同步</th><th className="px-4 py-3 text-right">Tokens 用量</th><th className="px-4 py-3 text-right">估算费用</th><th className="px-4 py-3 text-right">请求数</th><th className="px-4 py-3 text-right">用量占比</th><th className="px-4 py-3 text-center">状态</th></tr></thead>
+      <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{devices.map(dev => <tr key={dev.id} className="hover:bg-[var(--bg-card-hover)] transition"><td className="px-4 py-3 font-semibold text-[var(--text-primary)]"><div className="flex items-center gap-2"><Monitor className="w-4 h-4 text-[var(--accent-blue)]" /><span>{dev.name}</span></div></td><td className="px-4 py-3 text-[var(--text-secondary)]"><span className="font-sans font-medium">{dev.platform}</span></td><td className="px-4 py-3 text-[var(--text-muted)]"><span className="px-2 py-0.5 rounded bg-[var(--bg-main)] border border-[var(--border-color)] text-[10px]">{dev.architecture}</span></td><td className="px-4 py-3 text-[var(--text-muted)]"><div className="flex items-center gap-1"><Clock className="w-3 h-3 text-emerald-500" /><span>{dev.lastSync}</span></div></td><td className="px-4 py-3 text-right font-bold text-[var(--text-primary)]">{Math.round(dev.totalTokens).toLocaleString()}</td><td className="px-4 py-3 text-right font-bold text-emerald-600">${dev.cost.toFixed(4)}</td><td className="px-4 py-3 text-right text-[var(--text-secondary)]">{dev.requestsCount.toLocaleString()}</td><td className="px-4 py-3 text-right"><div className="inline-flex items-center gap-1.5"><div className="w-12 h-1.5 bg-[var(--bg-main)] rounded-full overflow-hidden"><div className="h-full bg-[var(--accent-blue)] rounded-full" style={{width:`${dev.sharePercentage}%`}} /></div><span className="font-bold text-[var(--text-primary)]">{dev.sharePercentage.toFixed(1)}%</span></div></td><td className="px-4 py-3 text-center">{deviceStatusBadge(dev.status)}</td></tr>)}{!devices.length && <tr><td colSpan={9} className="px-4 py-12 text-center text-[var(--text-muted)]">暂无设备数据</td></tr>}</tbody>
     </table></div></div>
   </div>
 );
@@ -1185,7 +1193,7 @@ const AggregatedDataView: React.FC<AggregatedDataViewProps> = ({ records }) => {
     <div className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl shadow-2xs overflow-hidden"><div className="overflow-x-auto max-h-[620px]"><table className="w-full text-left text-xs whitespace-nowrap">
       <thead className="sticky top-0 z-10 bg-[var(--bg-main)] text-[var(--text-muted)] font-mono uppercase tracking-wider border-b border-[var(--border-color)] select-none"><tr>
         <th onClick={() => handleSort('date')} className="px-3.5 py-3 cursor-pointer hover:text-[var(--text-primary)]"><div className="flex items-center gap-1"><span>日期</span><ArrowUpDown className="w-3 h-3" /></div></th>
-        <th onClick={() => handleSort('device')} className="px-3.5 py-3 cursor-pointer">设备</th><th onClick={() => handleSort('tool')} className="px-3.5 py-3 cursor-pointer">工具</th><th onClick={() => handleSort('model')} className="px-3.5 py-3 cursor-pointer">模型</th><th onClick={() => handleSort('vendor')} className="px-3.5 py-3 cursor-pointer">模型厂商</th><th onClick={() => handleSort('routeProvider')} className="px-3.5 py-3 cursor-pointer">路由提供商</th><th className="px-3.5 py-3">路由类型</th><th className="px-3.5 py-3">Tier</th><th onClick={() => handleSort('inputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输入 Tokens</th><th onClick={() => handleSort('cacheReadTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Read</th><th onClick={() => handleSort('cacheWriteTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Write</th><th onClick={() => handleSort('outputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输出 Tokens</th><th onClick={() => handleSort('reasoningTokens')} className="px-3.5 py-3 text-right cursor-pointer">Reasoning</th><th onClick={() => handleSort('totalTokens')} className="px-3.5 py-3 text-right cursor-pointer">总 Tokens</th><th onClick={() => handleSort('cost')} className="px-3.5 py-3 text-right cursor-pointer">订阅等价费用</th>
+        <th onClick={() => handleSort('device')} className="px-3.5 py-3 cursor-pointer">设备</th><th onClick={() => handleSort('tool')} className="px-3.5 py-3 cursor-pointer">工具</th><th onClick={() => handleSort('model')} className="px-3.5 py-3 cursor-pointer">模型</th><th onClick={() => handleSort('vendor')} className="px-3.5 py-3 cursor-pointer">模型厂商</th><th onClick={() => handleSort('routeProvider')} className="px-3.5 py-3 cursor-pointer">路由提供商</th><th className="px-3.5 py-3">路由类型</th><th className="px-3.5 py-3">Tier</th><th onClick={() => handleSort('inputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输入 Tokens</th><th onClick={() => handleSort('cacheReadTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Read</th><th onClick={() => handleSort('cacheWriteTokens')} className="px-3.5 py-3 text-right cursor-pointer">Cache Write</th><th onClick={() => handleSort('outputTokens')} className="px-3.5 py-3 text-right cursor-pointer">输出 Tokens</th><th onClick={() => handleSort('reasoningTokens')} className="px-3.5 py-3 text-right cursor-pointer">Reasoning</th><th onClick={() => handleSort('totalTokens')} className="px-3.5 py-3 text-right cursor-pointer">总 Tokens</th><th onClick={() => handleSort('cost')} className="px-3.5 py-3 text-right cursor-pointer">估算费用</th>
       </tr></thead>
       <tbody className="divide-y divide-[var(--border-subtle)] font-mono">{sorted.map(r => <tr key={r.id} className="hover:bg-[var(--bg-card-hover)] transition h-11"><td className="px-3.5 py-2.5 text-[var(--text-secondary)]">{r.date}</td><td className="px-3.5 py-2.5 font-medium text-[var(--text-primary)]">{r.device}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)] font-semibold">{r.tool}</td><td className="px-3.5 py-2.5 font-bold text-[var(--accent-blue)] max-w-[260px] truncate" title={r.model}>{r.model}</td><td className="px-3.5 py-2.5">{vendorBadge(r.vendor)}</td><td className="px-3.5 py-2.5 text-[var(--text-primary)]">{r.routeProvider}</td><td className="px-3.5 py-2.5">{routeBadge(r.routeType)}</td><td className="px-3.5 py-2.5">{tierBadge(r.tier)}</td><td className="px-3.5 py-2.5 text-right">{r.inputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="px-3.5 py-2.5 text-right font-bold text-emerald-600" title={r.costLowerBound ? '账本内费用下界' : '设备端统一账本价格'}>${r.cost.toFixed(4)}</td></tr>)}{!sorted.length && <tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">当前筛选范围暂无记录</td></tr>}</tbody>
     </table></div><div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border-color)] bg-[var(--bg-main)] text-xs"><div className="text-[var(--text-muted)] font-mono">显示 1 - {sorted.length} 共 {sorted.length} 条记录</div><div className="flex items-center gap-1.5"><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronLeft className="w-4 h-4" /></button><span className="px-2 py-0.5 rounded bg-[var(--accent-blue)] text-white font-mono font-bold">1</span><button disabled className="p-1 rounded border border-[var(--border-color)] text-[var(--text-muted)] opacity-50"><ChevronRight className="w-4 h-4" /></button></div></div></div>
@@ -1197,7 +1205,7 @@ type Metric = 'totalTokens' | 'cost' | 'inputTokens' | 'cacheReadTokens' | 'cach
 type Group = 'date' | 'device' | 'tool' | 'model' | 'vendor' | 'routeProvider' | 'routeType' | 'rawProvider' | 'tier';
 type ChartType = 'bar' | 'line' | 'pie' | 'table';
 
-const metricLabels: Record<Metric,string> = { totalTokens:'总 Tokens',cost:'订阅等价费用',inputTokens:'输入 Tokens',cacheReadTokens:'Cache Read',cacheWriteTokens:'Cache Write',outputTokens:'输出 Tokens',reasoningTokens:'Reasoning',requestsCount:'请求记录' };
+const metricLabels: Record<Metric,string> = { totalTokens:'总 Tokens',cost:'估算费用',inputTokens:'输入 Tokens',cacheReadTokens:'Cache Read',cacheWriteTokens:'Cache Write',outputTokens:'输出 Tokens',reasoningTokens:'Reasoning',requestsCount:'请求记录' };
 const groupLabels: Record<Group,string> = { date:'时间',device:'设备',tool:'工具',model:'模型',vendor:'模型厂商',routeProvider:'路由提供商',routeType:'路由类型',rawProvider:'原始 Provider',tier:'Tier' };
 const analysisColors = ['#2563eb','#10b981','#8b5cf6','#f59e0b','#06b6d4','#ec4899','#6366f1','#14b8a6'];
 const analysisCompact = (n:number) => n >= 1e9 ? `${(n/1e9).toFixed(1)}B` : n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1e3 ? `${(n/1e3).toFixed(0)}K` : Math.round(n).toString();
@@ -1228,7 +1236,7 @@ const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records, requests }) =
   }, [records]);
 
   const dimensionLabels: Record<Dimension, string> = { model:'模型', device:'设备', tool:'客户端', tier:'模式', routeProvider:'路由' };
-  const metricLabels: Record<Metric, string> = { totalTokens:'Tokens', cost:'订阅等价费用', requestsCount:'请求记录' };
+  const metricLabels: Record<Metric, string> = { totalTokens:'Tokens', cost:'估算费用', requestsCount:'请求记录' };
 
   const grouped = useMemo(() => {
     const map = new Map<string, { name:string; totalTokens:number; cost:number; requestsCount:number }>();
@@ -1381,6 +1389,173 @@ function devices(records: UsageRecord[]): DeviceInfo[] {
   return [...map.entries()].map(([id,d]) => ({ id,name:d.name,platform:d.platform,architecture:d.arch,lastSync:d.updatedAt ? new Date(d.updatedAt).toLocaleString() : '—',totalTokens:d.tokens,cost:d.cost,requestsCount:d.requests,sharePercentage:d.tokens/total*100,status:'online' as const })).sort((a,b) => b.totalTokens-a.totalTokens);
 }
 
+
+const DASHBOARD_SESSION_STORAGE = 'usagemesh:dashboard-session:v2';
+const DASHBOARD_SESSION_DB = 'usagemesh-dashboard-session-v2';
+const DASHBOARD_SESSION_STORE = 'session-keys';
+const DASHBOARD_SESSION_IDLE_MS = 30 * 60 * 1000;
+const DASHBOARD_SESSION_ABSOLUTE_MS = 12 * 60 * 60 * 1000;
+
+interface BrowserDashboardSession {
+  version: 2;
+  repo: string;
+  keyId: string;
+  iv: string;
+  ciphertext: string;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+function b64urlEncodeBytes(value: Uint8Array): string {
+  let binary = '';
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function openDashboardSessionDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DASHBOARD_SESSION_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DASHBOARD_SESSION_STORE)) {
+        db.createObjectStore(DASHBOARD_SESSION_STORE, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('secure session database unavailable'));
+  });
+}
+
+async function storeSessionWrappingKey(id: string, key: CryptoKey, createdAt: number): Promise<void> {
+  const db = await openDashboardSessionDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(DASHBOARD_SESSION_STORE, 'readwrite');
+      tx.objectStore(DASHBOARD_SESSION_STORE).put({ id, key, createdAt });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('secure session write failed'));
+      tx.onabort = () => reject(tx.error || new Error('secure session write aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function loadSessionWrappingKey(id: string): Promise<CryptoKey | null> {
+  const db = await openDashboardSessionDb();
+  try {
+    return await new Promise<CryptoKey | null>((resolve, reject) => {
+      const tx = db.transaction(DASHBOARD_SESSION_STORE, 'readonly');
+      const request = tx.objectStore(DASHBOARD_SESSION_STORE).get(id);
+      request.onsuccess = () => resolve((request.result?.key as CryptoKey | undefined) || null);
+      request.onerror = () => reject(request.error || new Error('secure session read failed'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function deleteSessionWrappingKey(id: string): Promise<void> {
+  const db = await openDashboardSessionDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(DASHBOARD_SESSION_STORE, 'readwrite');
+      tx.objectStore(DASHBOARD_SESSION_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('secure session delete failed'));
+      tx.onabort = () => reject(tx.error || new Error('secure session delete aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function readDashboardSession(): BrowserDashboardSession | null {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_SESSION_STORAGE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BrowserDashboardSession;
+    if (parsed?.version !== 2 || !parsed.repo || !parsed.keyId || !parsed.iv || !parsed.ciphertext) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function dashboardSessionExpired(session = readDashboardSession()): boolean {
+  if (!session) return false;
+  const now = Date.now();
+  return now - session.lastActivityAt > DASHBOARD_SESSION_IDLE_MS || now - session.createdAt > DASHBOARD_SESSION_ABSOLUTE_MS;
+}
+
+function touchDashboardSession(): void {
+  const session = readDashboardSession();
+  if (!session || dashboardSessionExpired(session)) return;
+  session.lastActivityAt = Date.now();
+  sessionStorage.setItem(DASHBOARD_SESSION_STORAGE, JSON.stringify(session));
+}
+
+async function forgetDashboardSession(): Promise<void> {
+  const session = readDashboardSession();
+  sessionStorage.removeItem(DASHBOARD_SESSION_STORAGE);
+  if (session?.keyId) {
+    try { await deleteSessionWrappingKey(session.keyId); } catch { /* best-effort cleanup */ }
+  }
+}
+
+async function rememberDashboardSession(repo: string, workspaceKey: string): Promise<void> {
+  await forgetDashboardSession();
+  const keyId = crypto.randomUUID();
+  const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const now = Date.now();
+  await storeSessionWrappingKey(keyId, wrappingKey, now);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aad = new TextEncoder().encode(`usagemesh-browser-session-v2:${repo.toLowerCase()}:${keyId}`);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad },
+    wrappingKey,
+    new TextEncoder().encode(workspaceKey),
+  );
+  const session: BrowserDashboardSession = {
+    version: 2,
+    repo,
+    keyId,
+    iv: b64urlEncodeBytes(iv),
+    ciphertext: b64urlEncodeBytes(new Uint8Array(ciphertext)),
+    createdAt: now,
+    lastActivityAt: now,
+  };
+  sessionStorage.setItem(DASHBOARD_SESSION_STORAGE, JSON.stringify(session));
+}
+
+async function restoreDashboardSession(repo: string): Promise<string | null> {
+  const session = readDashboardSession();
+  if (!session || session.repo.toLowerCase() !== repo.toLowerCase() || dashboardSessionExpired(session)) {
+    if (session) await forgetDashboardSession();
+    return null;
+  }
+  const wrappingKey = await loadSessionWrappingKey(session.keyId);
+  if (!wrappingKey) {
+    await forgetDashboardSession();
+    return null;
+  }
+  try {
+    const aad = new TextEncoder().encode(`usagemesh-browser-session-v2:${repo.toLowerCase()}:${session.keyId}`);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64url(session.iv), additionalData: aad },
+      wrappingKey,
+      b64url(session.ciphertext),
+    );
+    const workspaceKey = new TextDecoder().decode(plaintext);
+    if (b64url(workspaceKey).length !== 32) throw new Error('invalid workspace key');
+    touchDashboardSession();
+    return workspaceKey;
+  } catch {
+    await forgetDashboardSession();
+    return null;
+  }
+}
+
 function App() {
   const [dataset, setDataset] = useState<DashboardDataset | null>(null);
   const [workspaceKeyValue, setWorkspaceKeyValue] = useState('');
@@ -1389,7 +1564,31 @@ function App() {
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('usagemesh:theme') === 'dark');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('usagemesh:sidebar') === 'collapsed');
   const [syncStatus, setSyncStatus] = useState<'synced'|'syncing'|'error'>('synced');
+  const [sessionRestoreDone, setSessionRestoreDone] = useState(false);
   const [filters, setFilters] = useState<FilterState>({ timeRange:'all',device:'all',tool:'all',model:'all',vendor:'all',routeProvider:'all',routeType:'all',rawProvider:'all',tier:'all' });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const repo = repoFromLocation();
+      try {
+        const key = await restoreDashboardSession(repo);
+        if (key) {
+          const next = await loadDashboardWithKey(repo, key);
+          if (!cancelled) {
+            setDataset(next);
+            setWorkspaceKeyValue(key);
+            setSyncStatus('synced');
+          }
+        }
+      } catch {
+        await forgetDashboardSession().catch(() => undefined);
+      } finally {
+        if (!cancelled) setSessionRestoreDone(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => { document.documentElement.classList.toggle('dark', isDarkMode); localStorage.setItem('usagemesh:theme', isDarkMode ? 'dark' : 'light'); }, [isDarkMode]);
   useEffect(() => { localStorage.setItem('usagemesh:sidebar', isSidebarCollapsed ? 'collapsed' : 'expanded'); }, [isSidebarCollapsed]);
@@ -1411,10 +1610,35 @@ function App() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [workspaceKeyValue]);
 
+  useEffect(() => {
+    if (!workspaceKeyValue) return;
+    let lastTouch = 0;
+    const activity = () => {
+      const now = Date.now();
+      if (now - lastTouch < 15_000) return;
+      lastTouch = now;
+      touchDashboardSession();
+    };
+    const events: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'focus'];
+    for (const event of events) window.addEventListener(event, activity, { passive: true });
+    const timer = window.setInterval(() => {
+      if (!dashboardSessionExpired()) return;
+      setDataset(null);
+      setWorkspaceKeyValue('');
+      setUnlockError(null);
+      void forgetDashboardSession();
+    }, 30_000);
+    return () => {
+      for (const event of events) window.removeEventListener(event, activity);
+      window.clearInterval(timer);
+    };
+  }, [workspaceKeyValue]);
+
   const unlock = async (nextPassword: string) => {
     setUnlockError(null); setSyncStatus('syncing');
     try {
       const { dataset: next, key } = await unlockDashboard(nextPassword);
+      try { await rememberDashboardSession(repoFromLocation(), key); } catch { /* private mode may disable IndexedDB; login still works */ }
       setDataset(next);
       setWorkspaceKeyValue(key);
       setSyncStatus('synced');
@@ -1431,6 +1655,7 @@ function App() {
     setDataset(null);
     setWorkspaceKeyValue('');
     setUnlockError(null);
+    void forgetDashboardSession();
   };
 
   const options = useMemo<DynamicFilterOptions>(() => {
@@ -1475,12 +1700,13 @@ function App() {
   const title = activeTab==='overview'?'概览':activeTab==='analytics'?'用量分析':activeTab==='devices'?'设备':'聚合数据';
   const lastSync = dataset?.lastSync ? new Date(dataset.lastSync).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—';
 
+  if (!sessionRestoreDone) return <div className={isDarkMode ? 'dark' : ''}><div className="min-h-screen grid place-items-center bg-[var(--bg-main)] text-[var(--text-muted)] text-sm font-mono"><div className="flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin"/>正在恢复安全会话…</div></div></div>;
   if (!dataset) return <div className={isDarkMode ? 'dark' : ''}><UnlockScreen onUnlock={unlock} error={unlockError} /></div>;
 
   return <div className={`flex h-screen overflow-hidden bg-[var(--bg-main)] text-[var(--text-primary)] ${isDarkMode ? 'dark' : ''}`}>
     <Sidebar isCollapsed={isSidebarCollapsed} onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} activeTab={activeTab} onSelectTab={setActiveTab} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onLock={lock} />
     <div className="flex-1 flex flex-col h-full overflow-y-auto w-full">
-      <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与订阅等价费用" repoBadge="" pricingBadge="" lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
+      <Topbar title={title} subtitle="跨设备 AI Coding Token、路由来源与统一费用估算" repoBadge="" pricingBadge="" lastSyncTime={lastSync} syncStatus={syncStatus} deviceCount={allDevices} isDarkMode={isDarkMode} onToggleDarkMode={() => setIsDarkMode(!isDarkMode)} onRefresh={refresh} onLock={lock} isSidebarCollapsed={isSidebarCollapsed} onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)} />
       <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1920px] w-full mx-auto">
         {activeTab==='overview' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><KpiCards totalTokens={totals.totalTokens} cost={totals.cost} inputTokens={totals.input} cacheReadTokens={totals.cacheRead} outputTokens={totals.output} requestsCount={totals.requests} pricing={dataset.pricing} /><TrendChart isDarkMode={isDarkMode} data={trendRows} /><BreakdownCards records={filtered} /></>}
         {activeTab==='analytics' && <><FilterBar filters={filters} options={options} onChangeFilter={changeFilter} onResetFilters={resetFilters} /><UsageAnalysisView isDarkMode={isDarkMode} records={filtered} requests={filteredRequests} /></>}

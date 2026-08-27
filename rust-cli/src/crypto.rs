@@ -247,7 +247,10 @@ mod tests {
         let ciphertext = cipher
             .encrypt(
                 Nonce::from_slice(&nonce_bytes),
-                Payload { msg: encoded_dashboard_key.as_bytes(), aad: aad.as_bytes() },
+                Payload {
+                    msg: encoded_dashboard_key.as_bytes(),
+                    aad: aad.as_bytes(),
+                },
             )
             .unwrap();
         let envelope = DashboardAccessEnvelope {

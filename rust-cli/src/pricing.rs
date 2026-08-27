@@ -8,7 +8,7 @@
 //!
 //! General model prices are read from the same public models.dev catalog CC
 //! Switch can sync from. GPT-5.6 is guarded by audited seed prices so API catalog
-//! changes do not silently rewrite the subscription-equivalent accounting policy.
+//! changes do not silently rewrite the API-equivalent accounting policy.
 
 use std::collections::HashMap;
 use std::fs;
@@ -24,7 +24,6 @@ const CACHE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const GPT56_LONG_CONTEXT_THRESHOLD: i64 = 272_000;
 const GPT56_LONG_INPUT_MULTIPLIER: f64 = 2.0;
 const GPT56_LONG_OUTPUT_MULTIPLIER: f64 = 1.5;
-const CODEX_FAST_MULTIPLIER: f64 = 2.5;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct ModelsDevCost {
@@ -52,10 +51,6 @@ struct EffectivePricing {
     output: f64,
     cache_read: f64,
     cache_write: f64,
-    priority_input: Option<f64>,
-    priority_output: Option<f64>,
-    priority_cache_read: Option<f64>,
-    priority_cache_write: Option<f64>,
     long_context_threshold: Option<i64>,
     long_input_multiplier: f64,
     long_output_multiplier: f64,
@@ -73,10 +68,6 @@ impl EffectivePricing {
             output: output / 1_000_000.0,
             cache_read: cost.cache_read.unwrap_or(0.0) / 1_000_000.0,
             cache_write: cost.cache_write.unwrap_or(0.0) / 1_000_000.0,
-            priority_input: None,
-            priority_output: None,
-            priority_cache_read: None,
-            priority_cache_write: None,
             long_context_threshold: None,
             long_input_multiplier: 1.0,
             long_output_multiplier: 1.0,
@@ -269,10 +260,10 @@ impl PriceBook {
 
     pub fn metadata(&self) -> PricingInfo {
         PricingInfo {
-            policy: "subscription-equivalent".to_string(),
+            policy: "api-equivalent-estimate".to_string(),
             source: format!("CC Switch compatible · {}", self.catalog_state),
             source_url: MODELS_DEV_URL.to_string(),
-            compatibility: "GPT-5.6 guarded base rates; Codex Fast/Priority uses 2.5x Standard"
+            compatibility: "GPT-5.6 guarded base rates; speed tier is recorded separately and does not multiply USD cost"
                 .to_string(),
         }
     }
@@ -296,33 +287,13 @@ impl PriceBook {
         None
     }
 
-    pub fn quote(&self, model_id: &str, tier: Option<&str>, metrics: &Metrics) -> PriceQuote {
+    pub fn quote(&self, model_id: &str, _tier: Option<&str>, metrics: &Metrics) -> PriceQuote {
         let Some(mut pricing) = self.lookup(model_id) else {
             return PriceQuote {
                 cost_usd: 0.0,
                 lower_bound: true,
             };
         };
-
-        let tier = tier.unwrap_or("standard").trim().to_ascii_lowercase();
-        if matches!(tier.as_str(), "fast" | "priority") {
-            let Some(input) = pricing.priority_input else {
-                return PriceQuote {
-                    cost_usd: 0.0,
-                    lower_bound: true,
-                };
-            };
-            let Some(output) = pricing.priority_output else {
-                return PriceQuote {
-                    cost_usd: 0.0,
-                    lower_bound: true,
-                };
-            };
-            pricing.input = input;
-            pricing.output = output;
-            pricing.cache_read = pricing.priority_cache_read.unwrap_or(0.0);
-            pricing.cache_write = pricing.priority_cache_write.unwrap_or(0.0);
-        }
 
         let total_input = metrics
             .input
@@ -363,9 +334,9 @@ impl PriceBook {
     }
 }
 
-/// Guarded GPT-5.6 subscription-equivalent base prices. Values are USD/token;
+/// Guarded GPT-5.6 API-equivalent base prices. Values are USD/token;
 /// base card per MTok: Sol 5 / 30 / 0.50 / 6.25, Terra 2 / 12 / 0.20 / 2.50,
-/// Luna 0.20 / 1.20 / 0.02 / 0.25. Codex Fast/Priority is 2.5x Standard.
+/// Luna 0.20 / 1.20 / 0.02 / 0.25. Speed tier is tracked separately.
 fn guarded_pricing(model_id: &str) -> Option<EffectivePricing> {
     let normalized = match model_id {
         "gpt-5.6" | "gpt-5.6-low" | "gpt-5.6-medium" | "gpt-5.6-high" | "gpt-5.6-xhigh"
@@ -383,10 +354,6 @@ fn guarded_pricing(model_id: &str) -> Option<EffectivePricing> {
         output,
         cache_read,
         cache_write,
-        priority_input: Some(input * CODEX_FAST_MULTIPLIER),
-        priority_output: Some(output * CODEX_FAST_MULTIPLIER),
-        priority_cache_read: Some(cache_read * CODEX_FAST_MULTIPLIER),
-        priority_cache_write: Some(cache_write * CODEX_FAST_MULTIPLIER),
         long_context_threshold: Some(GPT56_LONG_CONTEXT_THRESHOLD),
         long_input_multiplier: GPT56_LONG_INPUT_MULTIPLIER,
         long_output_multiplier: GPT56_LONG_OUTPUT_MULTIPLIER,
@@ -423,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn gpt56_fast_is_explicit_two_point_five_x_card() {
+    fn gpt56_fast_keeps_base_usd_card() {
         let book = PriceBook {
             catalog: HashMap::new(),
             catalog_state: "test",
@@ -433,7 +400,7 @@ mod tests {
             Some("fast"),
             &metrics(100_000, 50_000, 10_000, 10_000),
         );
-        assert!((quote.cost_usd - 2.21875).abs() < 1e-9);
+        assert!((quote.cost_usd - 0.8875).abs() < 1e-9);
         assert!(!quote.lower_bound);
     }
 

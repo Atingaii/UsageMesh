@@ -211,7 +211,11 @@ fn normalized_key(key: &str) -> String {
 }
 
 fn normalize_effort_label(raw: &str) -> Option<String> {
-    let cleaned = raw.trim().to_ascii_lowercase().replace('_', "-").replace(' ', "-");
+    let cleaned = raw
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .replace(' ', "-");
     let label = match cleaned.as_str() {
         "minimal" | "min" | "lowest" => "minimal",
         "low" | "lite" => "low",
@@ -286,7 +290,9 @@ fn shallow_reasoning_effort(value: &Value) -> Option<String> {
                         nested_key_normalized.as_str(),
                         "effort" | "level" | "mode" | "budget" | "budgettokens" | "thinkingbudget"
                     ) {
-                        if let Some(effort) = effort_from_value(&nested_key_normalized, nested_value) {
+                        if let Some(effort) =
+                            effort_from_value(&nested_key_normalized, nested_value)
+                        {
                             return Some(effort);
                         }
                     }
@@ -412,7 +418,11 @@ fn fallback_ids(path: &Path) -> HashSet<String> {
             ids.insert(stem.to_string());
         }
     }
-    if let Some(parent) = path.parent().and_then(Path::file_name).and_then(|value| value.to_str()) {
+    if let Some(parent) = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+    {
         if !parent.is_empty() {
             ids.insert(parent.to_string());
         }
@@ -647,14 +657,20 @@ mod tests {
             "providerData": { "reasoning": { "effort": "high" } },
             "timestamp": 1780000000100i64
         });
-        assert_eq!(recursive_reasoning_effort(&value, 0).as_deref(), Some("high"));
+        assert_eq!(
+            recursive_reasoning_effort(&value, 0).as_deref(),
+            Some("high")
+        );
         assert_eq!(recursive_timestamp(&value, 0), Some(1780000000100));
     }
 
     #[test]
     fn thinking_budget_is_preserved_as_explicit_budget() {
         let value: Value = serde_json::json!({ "thinkingBudget": 8192 });
-        assert_eq!(recursive_reasoning_effort(&value, 0).as_deref(), Some("budget:8192"));
+        assert_eq!(
+            recursive_reasoning_effort(&value, 0).as_deref(),
+            Some("budget:8192")
+        );
     }
 
     #[test]
@@ -663,8 +679,14 @@ mod tests {
         bundle.reasoning_efforts.insert(
             ("codebuddy".to_string(), "s-1".to_string()),
             vec![
-                EffortPoint { timestamp_ms: Some(1_000_000_000_000), effort: "low".to_string() },
-                EffortPoint { timestamp_ms: Some(1_000_000_010_000), effort: "high".to_string() },
+                EffortPoint {
+                    timestamp_ms: Some(1_000_000_000_000),
+                    effort: "low".to_string(),
+                },
+                EffortPoint {
+                    timestamp_ms: Some(1_000_000_010_000),
+                    effort: "high".to_string(),
+                },
             ],
         );
         assert_eq!(
