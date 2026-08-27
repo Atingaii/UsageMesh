@@ -147,9 +147,13 @@ fi
 echo
 echo "Installed: $BINARY"
 if "$BINARY" status >/dev/null 2>&1; then
-  echo "Existing UsageMesh configuration detected on this machine."
-  echo "Refresh historical accounting after an upgrade with:"
-  printf "  '%s' sync --full\n" "$BINARY"
+  echo "Existing UsageMesh configuration detected. Finishing the upgrade automatically..."
+  if "$BINARY" sync --full; then
+    echo "Upgrade complete. Existing workspace, password, devices and sync interval were preserved."
+  else
+    echo "UsageMesh was upgraded, but the automatic full refresh failed." >&2
+    echo "The normal scheduler will retry on its next sync; you can also run 'usagemesh sync --full'." >&2
+  fi
 else
   echo "No local UsageMesh configuration detected on this machine."
   echo "If this is the FIRST device for a new workspace:"
