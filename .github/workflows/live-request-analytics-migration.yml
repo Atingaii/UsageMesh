@@ -21,7 +21,17 @@ jobs:
         with:
           node-version: '22'
       - name: Apply migration
-        run: python3 scripts/apply-live-request-analytics.py
+        shell: bash
+        run: |
+          python3 scripts/apply-live-request-analytics.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust-cli/src/crypto.rs')
+          s = p.read_text()
+          s = s.replace('schema_version: 4,', 'schema_version: 5,', 1)
+          s = s.replace('            rows: vec![],\n            totals:', '            rows: vec![],\n            requests: vec![],\n            totals:', 1)
+          p.write_text(s)
+          PY
       - name: Rust format and tests
         run: |
           cargo fmt --all
@@ -38,7 +48,7 @@ jobs:
           set -euo pipefail
           git config user.name 'UsageMesh Maintenance'
           git config user.email 'actions@users.noreply.github.com'
-          git add rust-cli/src/model.rs rust-cli/src/codex_tier.rs rust-cli/src/collector.rs rust-cli/src/config.rs rust-cli/src/scheduler.rs rust-cli/src/main.rs rust-cli/Cargo.toml Cargo.lock web-ui/src/app.tsx web-ui/package.json README.md README.zh-CN.md
+          git add rust-cli/src/model.rs rust-cli/src/codex_tier.rs rust-cli/src/collector.rs rust-cli/src/config.rs rust-cli/src/scheduler.rs rust-cli/src/main.rs rust-cli/src/crypto.rs rust-cli/Cargo.toml Cargo.lock web-ui/src/app.tsx web-ui/package.json README.md README.zh-CN.md
           git diff --cached --check
           git commit -m 'feat: add near-real-time request analytics'
           git push origin HEAD:main
