@@ -1,0 +1,104 @@
+name: Finalize Static Demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/finalize-static-demo.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.repository == 'Atingaii/UsageMesh'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+
+      - name: Bundle synthetic demo into the static site
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('web-ui/src/app.tsx')
+          s = p.read_text()
+
+          anchor = "const REMEMBERED_WORKSPACE_KEY_PREFIX = 'usagemesh:remembered-workspace-key:v1:';\n"
+          insert = anchor + "\nfunction isBundledDemoRepo(repo: string): boolean {\n  return repo.toLowerCase() === DEFAULT_REPO.toLowerCase();\n}\n"
+          if 'function isBundledDemoRepo' not in s:
+              if anchor not in s: raise SystemExit('demo helper anchor missing')
+              s = s.replace(anchor, insert, 1)
+
+          old = "  const envelope = await json<AccessEnvelope>(`${RAW}/${repo}/${ACCESS_BRANCH}/access.json`);"
+          new = "  const accessUrl = isBundledDemoRepo(repo)\n    ? new URL('demo/access.json', document.baseURI).toString()\n    : `${RAW}/${repo}/${ACCESS_BRANCH}/access.json`;\n  const envelope = await json<AccessEnvelope>(accessUrl);"
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('workspaceKey patch anchor missing')
+
+          old = "  const urls = [\n    // The CLI updates this branch on every successful sync, so newly joined\n    // devices become visible immediately without rebuilding GitHub Pages.\n    `${RAW}/${repo}/${DEVICE_INDEX_BRANCH}/index.json`,"
+          new = "  const urls = [\n    ...(isBundledDemoRepo(repo) ? [new URL('demo/index.json', document.baseURI).toString()] : []),\n    // The CLI updates this branch on every successful sync, so newly joined\n    // devices become visible immediately without rebuilding GitHub Pages.\n    `${RAW}/${repo}/${DEVICE_INDEX_BRANCH}/index.json`,"
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('device index patch anchor missing')
+
+          old = "  const envelope = await json<LedgerEnvelope>(`${RAW}/${repo}/${branch}/ledger.json`);"
+          new = "  const ledgerUrl = isBundledDemoRepo(repo)\n    ? new URL(`demo/${branch}.json`, document.baseURI).toString()\n    : `${RAW}/${repo}/${branch}/ledger.json`;\n  const envelope = await json<LedgerEnvelope>(ledgerUrl);"
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('ledger patch anchor missing')
+
+          p.write_text(s)
+          PY
+
+          mkdir -p web-ui/public/demo
+          cat > web-ui/public/demo/access.json <<'EOF'
+          {"schemaVersion":1,"kind":"usagemesh-dashboard-access","kdf":"PBKDF2-HMAC-SHA256","iterations":310000,"salt":"S6_umHYXafE0bfUpkP7jag","algorithm":"AES-256-GCM","nonce":"SvpfJygZ3mDTVZaq","ciphertext":"PMIcguNyUiCUGDRTLd19mC7cg8S4YBS7Iw1S8U8s41GR4LGXnhOpZ35tI18g_W-k97fzkod8BaTe_tA","updatedAt":"2026-08-27T07:55:00Z"}
+          EOF
+          cat > web-ui/public/demo/index.json <<'EOF'
+          {"schemaVersion":1,"kind":"usagemesh-device-index","branches":["um-ledger-42b488a492b9e07a","um-ledger-1d186dc1f552b1b2","um-ledger-58cea26624967407"],"updatedAt":"2026-08-27T07:55:00Z"}
+          EOF
+          cat > web-ui/public/demo/um-ledger-42b488a492b9e07a.json <<'EOF'
+          {"schemaVersion":2,"kind":"usagemesh-encrypted-ledger","deviceHash":"42b488a492b9e07a","updatedAt":"2026-08-27T07:55:00Z","algorithm":"AES-256-GCM","nonce":"oHWfOUTxfc-Ip1Ou","ciphertext":"VT9j3rU-8460uGssrZrLoVK1Z0lRCnTmEzoX_qIgx-1XbsjqVvKjfz7JTQP1ax0IpFay6Cevw8Auyd_GkRA-MCESQg9t5PxxpSzkGDhQMLOzPc3pKsntTcYb1DpUeP6HOkX6FuNj4rykAgTd5M91VtHrOfFDVndCHqJHwN0IMVYeXfVThkLutxcRoj8AIZeXAKu_OjW6iERWBgIK6SvLTBv0gR90wQMxNw-bwTnOZFgSTxkd55kMRPMpfjiloMHNMRbk4E_FLmLDwSGo_6S1TO3Pb5fHL_rsNVYSnESLoBCHiVdaTm3FiNEPn_WO1N4AYhNl6nrqRL8iPbhVBoASzcuot86xpG9mktVBVn22m7HAm4088loN-JCVW-P3cGKNPQ0vlM3p-gWPLGqYeIgoqcYYNodPPXhbXhyYOyKHbQm-z2mpHFBR3BR-XIafplQNEAwAldl7OIugyRZY3ALbW1L_0TwqIgXhXnS5WG4bWkCPB3Kc1w4rSVq6qSEH3FWsl3TP2OHcwCA02OyFvnqBLR_EB1zeQ5eyZ_4-9Jb-Ps0FMV99vzdnbx9glQpfMLGwve-L0ew15EXOCqcu7HTxLHu1StU7oxUgp1GkZblM5v2-rKFqI_FY4WhDTvEqqrakIrc7XkMy0rlm6o73NS59hgf37Mz2_Wbp7dh8AukCUXfQsOZ3ArIItNjmwC0Ous4Wgt9vm8N1V33AL3Wyh0eEUCXCrhSAvaHW5Lockx42RpW9TlWnkubz6_YBO_7QHxyIqVwxhtyPL4N1tJtmKNPNmHIr-I3iZwh-srlbjIAacSCoc2lMMAPO3wlo-PLG7M_RTGFmKluWo1qIrgFd6nGc2DyTVo8MFDc2yp4G8UqJJbEoUCs9OmHD9K3ctVerqISF0yuK-kosH42W-NmoIOYNDzfOl84CtqiPZfv9Aa_pB-Mccm4ohZpsX1ggBeVsBdeWGZFSEIN_mhHlL2xV5uWQVRLBEmzFFRPz500Kwix4Atgae9XhXqPyt6LLxoS7RlZ_QqbpLZPcrSJFl0lu65qfslbpMSYZym6ntScVriCKMppgP-wfX6o2HE6sdoceSoi23tlhZHeDpGb0pFn1-6vPHiKcPFh7Pl7cWDbKXVugNQ1TpPlElqP3QCVjmYgOvIDT_CHr3_IQ1G7Sd6E2vh-ZER3on1lbjd5FoeCW-tSVmgBMc7TBss9UZ0IHQpuJ7--dito82ENxKTfx2PcXjJwMw0ztRAfmiUxdKOB1G17dr-ehf_BJETyA_V-R_rl4ohFxkwrqPbwidTs5E_Y7hHSF2JduikQiR4UXGonXUWPiWxJvd48kKLm_Bm-QhMv1EmkYgKGHAcNp8Y1Bo1XAQCYAnEfoEjd0HaYrp8S0O1f68Y-w9EOBtmEoXNOCiC-EYcev63u1tEiMaKAQZ9mD_35qOpodG2uiUkk6Ji7T403K_RmzWmUvm8_6-ItJLkNJJv7xjRgxCmda3IKfnPEsTgnsuTLnrHOh_yFjzEyEwaCSIEzCZvWH3rkjcxV1AzBxlXMtGsD0BZykM7Da5yd93Z-Gt8faJkKEuZ7yD8iHfendBtirNkfr30zmZ7fA6mjCsFh-L1FAEvp_dc-YtGORXWFlzq2E4qJswZUjZy1Sn_ruXxbg0UhVfQ3cSQJfSP-Miv4cMO1_dj2H48Lmo4wALTbJ3_5dCPuUDmx7drzgx8z5JSmTtZMNgNb3y15rlf-vzLjQzVnCRat7KDCfvn0pYjrHQNsSUM67oYywDQ3q9ayP-veXXF-_9eG3Ithev384OCspFDFYX_XYEHJVJT_H0e6vRKqByBCbHEahT81jb2-i1YjxCQlnLQToCyW9zWOLAV5yRP4UflDhDfnD9lnNxGDsZICtQ3FC1lQdWt6odwV16bmjX74thLcTYObfq7J10LxlcmR6R7swYbyZDxoTqyzNEqSQlcn39li-JIk1oDs_14i25RqLPFldt7FTmfgP_lbIAKUYsg7gOSLrmBefqPaGcLxLNG7uuRhz9uN8wusNygXw_hIqDjbX5kGTHKXfvhe_hTA2HmvSeIHZ9Bwb9liZQ1IB1aWJPIn5tZmEf9K9z91ELmKQse3eWGu8_uliKXDJbaglNOiv25FsmB9cT-zE5Jc9MTU15OFxITyms3xWFWutZCucfHhosex58BRdpkCqVz6C-G3JWMokp3AHEaD4rA2Qe8akIaQc2EDdU27k9YuUXbUO91zg_Qv__BBuxQLMmWsbmIV1HZj4tQMzImd7U-lCcveXdEoxsDg3ZKdE68Hn-33hrJqVERhHyDNzfZ0y1VUeuTG34yPgrdEGJYDRL7Qyxzd6DxSsdVBU5RTVS6Z01iBOFN9dPbd42fEndxyKCuMUFeudqVAcJb7g96nuW5d7VEqdbl9KINSngs1QyG51dp8I0B5VW7JsV6abd3MKMHcUzM0_NNekVsp7nIDRgqLpG_0wU84iRe1FxR3PuTMFdAVFnj1CtltzSOBtILBc_quGcRvY5PTfPa5ETpx5DDFve_feeL_mYkzzo2dZ9Xh-wzH0jwpTmyP7Nd3I37jtkw4WPxQGY51A_PXUDY1KAnL-GcLiAMBo2zR8yvJHZk2W-OuyUV2bOakvQGCfdjyObBZTzQxWlv_8E1z9g2TFZLy6jU9GUQLjaxhYqowzKiVXJkV2ay2ntMTLkj-s9QIrnGr42G8U3AtZ5stB_Z3Rukp2QPJoluXuCGITQspF1VO0Cm5eZ-7OP-bCqc8ezZmk9Swd-5n-wC7AZwDUXWbEoh9ciPVMUm7-uTT0oXywOH8JaVxtABNhcrB1_igW0abem6kPqP-FbfXyE8ZdStBkNCBLdsccTB86qIEPYs32cXSXinwLClOIKnN9BbjOYd_9yGbV0n94uqqVTpfx7_uZMWa-2jgXGI7FnL1qFNzs3ylnSTGNGOuqz1H0Bugd6NK9qXkKJ9-PPwwD6VaCYf5zsbvm7t88uNHpDIwP04MJjzi-JS070mpn-oPyy2cobtsKNBn5UtoMBQOQsDG0Lyxnkbjz6xsIITPWYRzEEgNDsGxBjQV4cV_Ofj0tl-PghX2adcCFStMW59O_AC1hWJ55iGKnmHXo-OJ3b25pxC6i5KWTJocqrzZa1WBGbNW1BgNBkweswpw4DuuYU3MhS3dgyLAbmaSRmuF8HjllcXNuxa1F98Gckyp2JI4VINPTa3T5PXpbQgu2oEx-0s8OZMgHoTMh3I80kR8soOwjvHHcZD1jQML16vyOSnH03JPYA_sD-9cJYhyfoJ-vHmuKh2jIs6r-ggtP3IFsCgddUMObElyCwlcTT0iE9C0f"}
+          EOF
+          cat > web-ui/public/demo/um-ledger-1d186dc1f552b1b2.json <<'EOF'
+          {"schemaVersion":2,"kind":"usagemesh-encrypted-ledger","deviceHash":"1d186dc1f552b1b2","updatedAt":"2026-08-27T07:55:00Z","algorithm":"AES-256-GCM","nonce":"rK28TJ_hZ2-p3bDU","ciphertext":"-3RUmef-yDahN66MaYnouHA9CpPxDgIjHFnLfTYeYdhIRLoMiZISRncQ-OBZKMwAO0zpTTDvxDAnGVzaT3m8Xq7FtWKMDx5V4inQ0tn8xVOLkRNkDI6d3qOQAl2dkWieuwIfnEqUfUmyha4zY8bVRpCLNqWt_Mynhi4YWs_v0xJ8SfI15kxorlI5uiD1Q-TpljVeVLxaXSD2loLU_uGe44LErbgluP12W_ag-Q1yKSd9L8x75cBU0UHCFsnL931Y37uFPVkBg5TA6zFJJM_AMsMu9BrNluKraRknlammMapzpvpQ6GTgM9VUwtCsdewnce661wsyZhQOFtzzkfxdsW6eBtIisqi7vLQtNcVd2BlU-1faBQN1ugMV9Z5K8vBeqdyFe8evIWEneiCnQ0SSVfN2vpvlkRTSHKtRHUMOQpgjVHPw6LTnLRizyXzETEtgfarctF9Fe-8cysCRGT046Kk3cUwKhw6Ryd5DZdgE4U_TNQoLzoiBl78REMM-aoQdQxT845lCcIesupLGt4CWnAccEiR7C6UamwVmC8SxhmN--RknkCnOjDC4XSK6Rg60uNgPkwoaqsRBiPq1YJttQHbAcGxoPXIvw68kdgvu7PcCIwmD6O-rtvF0F5_ahLJ6s9-t0yfHIPTq4ri0y9kvvDrNXAvSLoXfHcatjuOssq3KR8S5-vZJcx7jocvqE0EIxiv93JJ8J5TsKi5ZFagQrrOsg7QRBJb5bfY1oiXMogDk5Greodilrdu7MzojsX-4FKg05fFIdFc4GRWxkjiN9Ihj2RDzoQWKxIYUQ6xEv_KDFL4tc43oSADhUrsRdzuA8Rq4XUkq1YciqqCSHq4Svb3p7SQ3FL_uKraAU8nIiWXSvUBsVk59nHqsEw5KIoh-u8nh46LY2iw6lyut3Ox9WoqrBT_FDnl9Qw9pstl9ibDQFp8zhHBdcHPTqzw2neiClldv_GxXBcFC1s-UiEohPajIqrw1dds4E5X4qAAhpC2h6d0g4xpDGFAJVjExaJENnzmji1LZ7eZbSmHRGG4Gmeez0BRtyJoOzWqt_J2QK7rl1Z5OdAjdIF06W8KbtS5oCSOJJaKrOWV3P6HYpkXkwSpaXNqs8VGiPuGKEpkvZ1lTzu-CxIPxkVcf6ntld251nW2OK0-qxiAFl8n-4r2A8YYaIOolO2I_D0ehgL3gQCcKEQUMkJ3IRPSfLcCgbYZaAx_vU8n15zeTU_7wj-Lw4HMPj0Kyh2SCgTkXImXfwfyxBxNwAW8-jgyXWHfdmTixGxsDeekl4RKghNl6Gc_PD84VjhA8aL8JFStbNB9iS0jnEr4ZqQWiveUo99kLfMazUodCZCD85PkPNrz-94cCOhDO3L2tu7O1znxAJ3c8siOd9WpFEAYTj2vEjDmLh0EdPOkKL-hCBXG8-1Nl6UWl5oRnxYa5rKs5hTqaE5FhEsYLLNfCXisiokFFF4KwwnIl4r95c0lH5GN8RuxU5pAuTXtF8Y9_ye19W8kIBeVh1Gj9KhFhAb4_9iYZ5FUQj8PZDGLS4tXGm02Fc3wHFF-U5jYuMWfD2Ua4IkL7iVvSDRPbfCxi4QBXTfsvPknNvu-zu6H7NtR_Sg8kWVER8F6obFgnGFUrQsdC5GEalGrNLSqfyIneCxVgePsR3CYhhyYuSrLaP_kpyYW2GaUOFRVQV7d7aPdtJagsYF1epAxCH0nMZn9ICoT48whgVxpyDGUUYBeZOTwfDamVSvQDULCUyMDPfBDGT-eXjSWSPp0Q_DM9npGlRYQ4zmdNmKKEGrNBOg7nbFFMZ4T49p-ylQGU8a_l2TX4i_WXv0GOYvo6woluVNA30E2AA28MYCKjX4Y1FvdPQ2eQ3Mp4lFFO_6JJO4RNPkTD6fcD9mOoxbEv3fZ3w3Z6SGVia2H0Xxw44dhG5XO5AtjRM7Fr8w8G6pQ-zuYsBZBGG0Zqj_nMLx-dlQlQ_am3qjCXYXnCPLcb-nXdVZhEoggV2InxPWfD1ksiOJCnOlNfzAHiHyiAQfcFE7wn5kFw2pGKwhoQBz7ngIpEIdh_w6C6wfrEZXIR4cELh9hjUmbjJ2Bf-XpGu1EeF_OkQaGR4DJvmZUjReDXgO-nvimJkts0W41WewP4_15cEjK9P81uWQ8gr6J8gPb-SS2teSEgdUdXwhqgrczUmYpd4G5Sn4tav4h5INoZ_gdS_ocaxGM8FDe5cTJyS1sOqeJl6hVZ0LK-yv6fWTXLV3ZPsOpQxpU2Ks99AXTsYaLlXhLHno7S7KiWtG84ZYWFoQECnMq4JKw0hy_mZs1vvw_49owD3tnvkH1zPNr9e2UurzTmjVEFuP4aLngxJK1H5_Y9F7wR5eY9qCrJN0Y8UTjQyow7Hr532RqhnWKe0KWc3agekJLYgSIn84HjhYls5ZLcOXR-O1zmRoQyVk1IljcfCmem3G7W5yQSDDVOIkwdMO-Fp8Wqqu2TXAf6aUlOLslKPgZ5oNKbBNtjLMnce8L3H6WD7UrnRMACVz19yWr6B0r2gu1CIzd07o3XEX39zC6SLMPByXAFwO_LZM0KA-8suyPnwEzQqdbxMIjfm_ISLR6oId8AZAU6auJJWxU2DegpMVkksly7vRrDG3i0O0WYJbriL1WWfb1Kh-MWu7Q28d-wjHeKcmmt-oEvH_Qx45Rc_1S4dhdqh5rCQy_XgxcBOaq4PL0MN6HTGLvwy1Qdx57vS5pGTNJHZ_eE7Q3kQcfTaTdKypN4z14GMSHD32ZHv3pBvD-Q8rr6TJp7cZAup9gyHdq-I5CsInG0EbeVsdihwnj822Xqbi6dllResOnywil6Z7B-AZXhidZzeMtFf9uYqy8HjPmog1usoEL8yC7obTG2Mfr0fOm8H__kAoNnCiMvNSZFVH1Enpc3saRWPZzOnFZKRwYoXwv7fb0Sb-lSANeJnadPaDtp2c4hXedST9BjIdDg7MBRiy_osuQ80H4hF9ti-mBsdNuhTa8XPNh6eSkYbGXyfgIqQvnG8bRltq7G8LB24lfl7QfxO3AVFN4plbwqZw0frzWLZDOYCuf-P1SnE-VuDWYb6_x1uTqw0f9tURI96-ZQHCHGPl_LgNpdd0iAzE6v3iunblfqs95TqtwyTwZqDv8pSUGmM-IwOyTSBb44NZUBhv2f1t0cgNtB5bRkhNL3OWo5Z3_RheDVaK0IBntOiEwupvJkfpRB1VvnuaeyZNqaJsIAVJcggstYeiaQt1uBhBg3Ke_SHHuWzsNxLI8eeUJSohLdA028WUDx_aurBSHRw0ruvGiZPxuKiOLIXH9yeTVjyME8o7r17VPU2GBxvx5-_d3ClXFs3HuH2KQTU-iGgKAul_gcEUz3fdc3zNA4-j0VZxUcu17ZpjZXb5vsSZxA04jhAviaDzpc5hw7PXU2lNhf9kYbUmpijtV6ePxdCr1u20eudaZVmP7FTOuIpCa_02QJxKTfJgWzcarX-OiGybzQLlPzHprb7sev9r098kBhjM7oStSAYmwbyh2q1uAGFfkZXrgYbvobsuOSWiC8"}
+          EOF
+          cat > web-ui/public/demo/um-ledger-58cea26624967407.json <<'EOF'
+          {"schemaVersion":2,"kind":"usagemesh-encrypted-ledger","deviceHash":"58cea26624967407","updatedAt":"2026-08-27T07:55:00Z","algorithm":"AES-256-GCM","nonce":"aH9X2WaJcHbD2qgc","ciphertext":"RwyV0JfoE6hLMCpGR3OU60d3-tVNsGxNonESyWU24jra-i2nXVAoSLD_SmDAIaY1FR7c1rZLvX-zDOqEYvWwVjpGv32io4ZrOVYFJxpPK9oKO8bYXUIeVd06vDmxgqFC2zanF0_Cn6Fm1tqGoiQFVj5duNCOvKrRnKvL7eQf5fu1xc-u526ru4vFcEKIxxk-YoC-Dj0lnFImTnWDsReNj4-v1IniVfNGjqpT9VCAYcaJmOj2tCO3dldRgqK0gt8m-eVotoxGcqkyM3UfJcXtVtf3_RqTWDfeMLqBwKX5ydVz0IgC1WxE-WP6MTSlhiXQGTfuWke0sDCpWtVV6hTe1_12UNzz4BqN7Wa2p7smW6p5bV0LzAn4UUgxwSRNTQrLsdGern4eX4xXMCdoGqLYccWC5P7d1KGBgYzz2f8WPnEehdU8H_6LLd1aOTvzI8uooN_ny1XrLwEBrfbK6sqM3pLwDz6glGNyB1GLpR-BG76RmdkjFED4TdRWdS0E5pPDhjGz_f8IPU4dLq_NZS5r53tXCXGainXt4jAFpQOyPvArvr8TF8mhHHS6AV9ru_wpA3TD-EbbcWChGq6CW-s13fFrbCQx0jdl83bFX29RL7FjLdloOoeykxyesIRNsHqUcJS5dP5lEp8zGRUSgk1UWsyZPoRoyOpoVLGLAC4a33s5Bk-Not-Z0yYUSrUOYka0AAMS_Col_af3sYwWkgzSS3yl-OtyJJpQCSEIegPtzh4r3IEY3NSCIAfZF7Hd6uzKs5H5aE_XOA5BXTdMzQbojBJSmRQUltJAbMX7Te1AI2CSEHWWNNc09crPHbxteNWo66jyDusT_HXpTkaZSkEO_s8KRmC4Sr7NnGiXlyzh7vSTGcPArEThQmDW9gyb-k_Riaog3ynFJqnWmE1-qNr7vmn1XA28c99lKt8IOSli_K0Q7nkqQ24lxImuDiGL9zbchK31N1PJNQWXZ7R0NiAMf4gjSnW6SER5cVdIENJiYtIlPlFWDrzQGi_tVdTNVP9ydZGgSTxpNUqRKJOOCgfWgSsmdvr83prM7DB_joIFTBwPhqkphWiTxWoIe2MYb_IbBf0CLcsPRL-CgW_R91D_g5HmUojkup77czKw-J94bDNGQoD3KVzJfPtsP6nIs_2XXSOUhhlSuLwt3X75PnzacxfqVRcw2kpjoVdBuNSORezz8uDjEpWUF1XaGbFgai9xZTvvuTo_N7kVHT8WRisLe5FyNb04JTXrpX2weaGPqUMlMm3siAbyQ_7j6x7-W1RecAikEK39B5XXgB6_YIwD0runXQTiDfxxE8oDCqJdcGMpgt0J6YUIqQOkdRlLT_qgYZL_vv1TpF0oNm5YJ7-3-goNxbvJhj79BLXirqLV03PbU-Sq011LKb71hEuHDQ_1ze5bWXJVPJni6GI4eZZWLakBUbqnj_Zd94F0Vk_gNCJcdCsEWGCqBGdRbE4ui_Eepy81G8xCHKv7tuZitPBxKVltrMDIWLPnfB289Wuxy_oZ7IlgaFPzSd1ePALiNXZf-IxOAM9oFSVuRyQFDLZu0jU5kn5RwhYLwlisRaXuVUiIRJ5z1lnfxKI2Bo28UDvs1e5HAMfJEg2jtCwgE2uXF6fGD9kIF8lfGHh-vxhJwtJ7lrVK0X2WNYIv2mpu_zL6mcQpMkVDSvaiUujpHUDIXqKA2i47fkN8vrQ-EMSQD4qA7eA5GYLK4S_ZpN7h0jCVzoVNbR0nmb0WMDlHen5cWmIbgE1B4hZeMkVpBg4dlTKZneaSVQ9AQbwB0P6Rv_VShtqClXm7at3zboKC472GNQA5ZER9_iHvEZ9kWcYJ9BvLpACFRASlNzM0RWrKieZEUfYrN8gwjUhvmhujdNXQ3vBvMzaosq9DUqrFet_ccTSophC4t8ABxcS0assA2_4ShxvZchPMhrYZBp8RP0vYyzgJgcH-995U6DlUZAfBmWDZkG-uFc4wwIeucD-lEks_t1hgI-_TclJ0ADYuaJKwp9_flsmR3xMuIks-H2TP4xT_QvxTZ1xSh7iINUHtFwBJ7PCTSsAM3BY3JBF46MG8zIiDze6nyNAdLEpdKmB6TIz5ce18EyeYx-_SO4jmy4AUdinMtkCYAtcQyYx_EJoR4ODq3jOT7WNcHO221NveQtnwiyBvv0ieoiYTStLB9FnK4jHHJPX8kagxRn4gn2J92e6EsDpSTTitEDsL2OIGa38H1sQmDcECLytJYDJX4v7SkN3LyJmjhLTBABI0j6Mu2jdHTYLK_pZcMf5VbyWxDW0G1fLGIl-2OnHPaGo4W-jbr_ZgA3K2Y-IR32pkWJ4DwDfJM7EUvr40f8F-Qjgutl75V3QUg1_eGJ-V9-ENOrw4zB2rqSUPIgvsgWp_BRaDTTNy64sbLxpKCeTIsoA8jFea33IAvoiciyQIkM8Pvm0QTLAtnWJGm-LXyf8XReOuAMwwKpqLywqDxvWgBcm8-jURPRBn_PHo2pAB2di9T3P19RIEX_L6nWURhlfGMy8PbgvG_JJrOC1Vhvf_A1fcT210gxVl_gP44tBoh4bxXsUyX20BOZmJHTHo1fS5gNuCR3H7qUoqu4ZI_y9UH3qSPIy8GKGtxigBA3UmYbBxgR5FskyHd9X2azv4R01phZBUrp3Ix9k5G-POmjvsYAWACEumqfitMxgOXOqXd6VIT6EJnblWO3_gKmKA7eLs19FYmpB3lpbtmSPAYRvEpSBdPuAiTtGMUAiwrRrdN7uGlFJzK_NeHsfTBsaCBLsI4H-r7amwqP2-_i5gkWNLRrI9AC_nSrglyYQZ9KWfM52n_qzz1zAS_qE_rHMhtvs2h30mW7vQxLcTzeeSJO0of-3zbbUaodgScZCD8DSmicjPH0zeZiiuyKEnR6wIMZWsY5sThsrHqe8M_tOYU2xZgdzPzamFViNxjarKbpTNgnzQe09H4LmK0-fpedQuNP1Ck4vph0nlk-UBq1sPMm6JtbubkEOQ"}
+          EOF
+
+      - name: Validate static demo and dashboard build
+        working-directory: web-ui
+        run: |
+          grep -q "isBundledDemoRepo" src/app.tsx
+          grep -q "demo/access.json" src/app.tsx
+          grep -q "demo/index.json" src/app.tsx
+          test -s public/demo/access.json
+          test -s public/demo/index.json
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
+      - name: Commit final source and remove temporary demo branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'UsageMesh Maintenance'
+          git config user.email 'actions@users.noreply.github.com'
+          rm -f .github/workflows/finalize-static-demo.yml
+          git add -A
+          git commit -m 'feat(web): bundle clean synthetic demo workspace'
+          git push origin HEAD:main
+          for branch in um-dashboard um-index um-ledger-42b488a492b9e07a um-ledger-1d186dc1f552b1b2 um-ledger-58cea26624967407; do
+            git push origin --delete "$branch" || true
+          done
