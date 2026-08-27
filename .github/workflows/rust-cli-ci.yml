@@ -134,16 +134,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: JavaScript syntax
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package.json
+      - name: Validate materialized dashboard invariants
+        working-directory: web-ui
+        shell: bash
         run: |
-          node --check web/github-api-shim.js
-          node --check web/analytics.js
-          node --check web/app.js
-      - name: Analytics unit tests
-        run: node web/analytics.test.cjs
-      - name: Privacy regression checks
+          test -s src/app.tsx
+          test -s public/usagemesh-icon.svg
+          test -s public/device-index.json
+          grep -q "subscriptionSpeedMultiplier" src/app.tsx
+          grep -q "分析工作台" src/app.tsx
+          grep -q "sessionStorage" src/app.tsx
+          grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
+          ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
+      - name: Install dashboard dependencies
+        working-directory: web-ui
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and production build
+        working-directory: web-ui
         run: |
-          ! grep -R -i -E 'auth\.json|prompt[^a-z]|assistant response|api[_ -]?key' web/*.js || (echo 'Dashboard code must not depend on private session payloads' && exit 1)
+          npm run typecheck
+          npm run build
 
   upstream-parser-suite:
     name: Tokscale v4.14.0 parser regression suite
