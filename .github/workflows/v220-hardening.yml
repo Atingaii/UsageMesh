@@ -1,0 +1,57 @@
+name: V220 Hardening
+
+on:
+  push:
+    branches: [feat/security-reasoning-v220]
+    paths:
+      - '.github/workflows/v220-hardening.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/security-reasoning-v220
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+      - name: Apply migration
+        run: python3 scripts/apply-v220.py
+      - name: Rust tests
+        run: cargo test --workspace --all-targets
+      - name: Dashboard typecheck and build
+        working-directory: web-ui
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+      - name: Security and compatibility invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'ACCESS_PBKDF2_ITERATIONS: u32 = 600_000' rust-cli/src/crypto.rs
+          grep -q '100_000..=5_000_000' rust-cli/src/crypto.rs
+          grep -q 'reasoning_effort_for_message' rust-cli/src/collector.rs
+          grep -q 'thinkingbudget' rust-cli/src/evidence.rs
+          grep -q 'Content-Security-Policy' web-ui/index.html
+          ! grep -q 'REMEMBERED_WORKSPACE_KEY_PREFIX' web-ui/src/app.tsx
+          ! grep -q 'sessionStorage' web-ui/src/app.tsx
+          grep -q 'envelope.iterations < 100_000' web-ui/src/app.tsx
+          grep -q 'version = "2.2.0"' rust-cli/Cargo.toml
+      - name: Commit verified source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust-cli/src/collector.rs rust-cli/src/crypto.rs rust-cli/src/main.rs rust-cli/src/evidence.rs rust-cli/Cargo.toml Cargo.lock web-ui/src/app.tsx web-ui/index.html web-ui/package.json web-ui/package-lock.json
+          git diff --cached --check
+          git commit -m 'feat: harden dashboard security and reasoning metadata'
+          git push origin HEAD:feat/security-reasoning-v220
