@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/scripts/fix_v230.py'
       - '.github/scripts/fix_v230_followup.py'
+      - '.github/scripts/fix_v230_repair.py'
       - '.github/workflows/fix-v230.yml'
 
 permissions:
@@ -28,6 +29,7 @@ jobs:
         run: |
           python .github/scripts/fix_v230.py
           python .github/scripts/fix_v230_followup.py
+          python .github/scripts/fix_v230_repair.py
       - name: Verify Rust
         shell: bash
         run: |
@@ -62,7 +64,7 @@ jobs:
           set -euo pipefail
           git config user.name 'Atingaii'
           git config user.email 'zyaiting@email.swu.edu.cn'
-          git rm -f .github/scripts/fix_v230.py .github/scripts/fix_v230_followup.py .github/workflows/fix-v230.yml
+          git rm -f .github/scripts/fix_v230.py .github/scripts/fix_v230_followup.py .github/scripts/fix_v230_repair.py .github/workflows/fix-v230.yml
           git add -A
           git commit -m 'fix: use official time-aware pricing and local endpoint route evidence'
           git push origin HEAD:main
