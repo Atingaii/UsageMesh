@@ -115,7 +115,7 @@ jobs:
           path: out/${{ matrix.asset }}.*
           if-no-files-found: error
 
-  publish:
+  publish-candidate:
     needs: build
     runs-on: ubuntu-latest
     outputs:
@@ -133,7 +133,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Publish GitHub Release
+      - name: Publish verified-candidate assets as prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
@@ -141,17 +141,20 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --prerelease --title "$RELEASE_TAG"
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             gh release create "$RELEASE_TAG" dist/* \
               --target "$GITHUB_SHA" \
               --generate-notes \
-              --title "$RELEASE_TAG"
+              --title "$RELEASE_TAG" \
+              --prerelease \
+              --latest=false
           fi
 
   verify-install:
     name: Install smoke / ${{ matrix.label }}
-    needs: publish
+    needs: publish-candidate
     strategy:
       fail-fast: false
       matrix:
@@ -171,24 +174,24 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install from GitHub Release (Unix)
+      - name: Install from candidate GitHub Release (Unix)
         if: runner.os != 'Windows'
         shell: bash
         env:
-          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
-          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish-candidate.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish-candidate.outputs.tag }}
         run: |
           export USAGEMESH_INSTALL_DIR="$RUNNER_TEMP/usagemesh-bin"
           sh ./install.sh
           expected="${EXPECTED_TAG#v}"
           "$USAGEMESH_INSTALL_DIR/usagemesh" --version | grep -F "$expected"
           "$USAGEMESH_INSTALL_DIR/usagemesh" clients >/dev/null
-      - name: Install from GitHub Release (Windows PowerShell 7)
+      - name: Install from candidate GitHub Release (Windows PowerShell 7)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
-          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish-candidate.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish-candidate.outputs.tag }}
         run: |
           $env:USAGEMESH_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'usagemesh-bin-pwsh'
           ./install.ps1
@@ -198,12 +201,12 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $version -notmatch [regex]::Escape($expected)) { throw "Unexpected version: $version" }
           & $binary clients | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }
-      - name: Install from GitHub Release (Windows PowerShell 5.1)
+      - name: Install from candidate GitHub Release (Windows PowerShell 5.1)
         if: runner.os == 'Windows'
         shell: cmd
         env:
-          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}
-          EXPECTED_TAG: ${{ needs.publish.outputs.tag }}
+          USAGEMESH_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish-candidate.outputs.tag }}
+          EXPECTED_TAG: ${{ needs.publish-candidate.outputs.tag }}
         run: >-
           powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command
           "$env:USAGEMESH_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'usagemesh-bin-wps51';
@@ -214,3 +217,21 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $version -notmatch [regex]::Escape($expected)) { throw ('Unexpected version: ' + $version) };
           & $binary clients | Out-Null;
           if ($LASTEXITCODE -ne 0) { throw 'clients smoke test failed' }"
+
+  promote:
+    name: Promote stable release
+    needs: [publish-candidate, verify-install]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark candidate as stable latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-candidate.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false \
+            --latest \
+            --title "$RELEASE_TAG"
