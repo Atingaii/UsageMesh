@@ -20,13 +20,21 @@ A GitHub credential is required for device-side writes. It is not embedded in pa
 
 Use a fine-grained PAT scoped to the UsageMesh fork with the shortest practical expiration. Revoke and replace it immediately if exposed. Native OS secret-store integration is a future hardening target; until then, local account compromise is inside the threat boundary.
 
+## Automatic updates
+
+Starting with v2.0.2, normal synchronization checks the latest stable `Atingaii/UsageMesh` GitHub Release. An update is installed only after the platform archive's SHA-256 matches the checksum published with that release. Release candidates are published as prereleases and are not promoted to `latest` until all supported platform builds and installer smoke tests succeed.
+
+This checksum protects against accidental corruption and mismatched downloads, but it does **not** create an independent trust root: the archive and checksum are both distributed through the same upstream GitHub repository. Automatic updates therefore trust GitHub HTTPS delivery, the security of the upstream repository and release workflow, and the maintainer account. Environments that require pinned versions or an external software-supply-chain policy can disable automatic updates with `USAGEMESH_AUTO_UPDATE=0` and manage the binary separately.
+
+An automatic CLI upgrade replaces the executable in place and does not rewrite the workspace key, dashboard password, device identity, GitHub credential or configured synchronization interval.
+
 ## Pair codes
 
 Pair codes contain repository identity, sync interval and workspace encryption key. They do **not** contain the GitHub PAT. Possession of a pair code may be sufficient to decrypt ledger data if ciphertext is accessible, so pair codes must be treated as secrets.
 
 ## Not protected against
 
-UsageMesh cannot protect data from malware/root access on a device, a compromised browser origin while unlocked, a leaked pair code/workspace key, or a weak/reused dashboard password. It also cannot guarantee the correctness of upstream tool logs or provider pricing metadata.
+UsageMesh cannot protect data from malware/root access on a device, a compromised browser origin while unlocked, a leaked pair code/workspace key, a weak/reused dashboard password, or compromise of the trusted upstream release channel. It also cannot guarantee the correctness of upstream tool logs or provider pricing metadata.
 
 ## Reporting
 
