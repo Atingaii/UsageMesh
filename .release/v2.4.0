@@ -4,6 +4,7 @@ UsageMesh 2.4.0 relay-compatible Sol pricing and billing-route release.
 - Standard, Fast and Priority remain request metadata and do not multiply the compatibility USD estimate.
 - Locally observed base URLs distinguish official API routes, ChatGPT subscription routes, cloud routes and third-party relays.
 - Codex ChatGPT authentication can identify an official subscription route when the built-in Responses transport has no explicit base URL.
+- Built-in `openai`, `openai-codex` and `openai-http` transports are also recognized from ChatGPT authentication when Codex has no provider table entry; explicit Base URLs still take precedence.
 - Raw endpoints and authentication material remain on-device; only normalized route and billing-channel labels are encrypted and synced.
 - macOS launchd schedules inherit the install shell's proxy variables so GitHub sync and automatic updates keep working behind a local proxy.
 - The schema, pricing policy and scheduler revisions trigger automatic migration, historical repricing and scheduler refresh.

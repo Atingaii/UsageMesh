@@ -86,15 +86,9 @@ fn codex_provider_hints(home: &Path) -> HashMap<String, RouteHint> {
     let codex_home = std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".codex"));
-    let Ok(text) = std::fs::read_to_string(codex_home.join("config.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(value) = text.parse::<toml::Value>() else {
-        return HashMap::new();
-    };
-    let Some(table) = value.get("model_providers").and_then(toml::Value::as_table) else {
-        return HashMap::new();
-    };
+    let config = std::fs::read_to_string(codex_home.join("config.toml"))
+        .ok()
+        .and_then(|text| text.parse::<toml::Value>().ok());
 
     // ChatGPT authentication is local billing-channel evidence, not a provider
     // name guess. Codex's built-in Responses transports may intentionally omit a
@@ -111,8 +105,12 @@ fn codex_provider_hints(home: &Path) -> HashMap<String, RouteHint> {
         })
         .unwrap_or(false);
 
-    table
-        .iter()
+    let mut hints: HashMap<String, RouteHint> = config
+        .as_ref()
+        .and_then(|value| value.get("model_providers"))
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|table| table.iter())
         .filter_map(|(id, config)| {
             if let Some(base_url) = config
                 .get("base_url")
@@ -146,7 +144,31 @@ fn codex_provider_hints(home: &Path) -> HashMap<String, RouteHint> {
                 )
             })
         })
-        .collect()
+        .collect();
+
+    // Codex's built-in OpenAI transports do not need a [model_providers.*]
+    // table. When ChatGPT authentication is present, the absence of an explicit
+    // provider override is positive first-party subscription evidence. An
+    // explicit table entry (especially one with a third-party base_url) always
+    // wins and is never overwritten here.
+    if chatgpt_auth {
+        let configured_ids = config
+            .as_ref()
+            .and_then(|value| value.get("model_providers"))
+            .and_then(toml::Value::as_table);
+        for id in ["openai", "openai-codex", "openai-http"] {
+            if configured_ids.is_some_and(|table| table.contains_key(id)) {
+                continue;
+            }
+            hints.entry(id.to_string()).or_insert_with(|| RouteHint {
+                route_provider: "official".into(),
+                route_type: "official".into(),
+                billing_channel: "official-subscription".into(),
+            });
+        }
+    }
+
+    hints
 }
 
 fn scan_codex_file(path: &Path, bundle: &mut EvidenceBundle) {
@@ -906,6 +928,62 @@ wire_api = "responses"
         let hint = hints.get("openai-http").unwrap();
         assert_eq!(hint.route_type, "official");
         assert_eq!(hint.billing_channel, "official-subscription");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn chatgpt_auth_marks_builtin_openai_provider_as_official_subscription() {
+        let root = std::env::temp_dir().join(format!(
+            "usagemesh-evidence-builtin-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let codex_home = root.join(".codex");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(
+            codex_home.join("config.toml"),
+            "model_provider = \"openai\"\n",
+        )
+        .unwrap();
+        std::fs::write(codex_home.join("auth.json"), r#"{"auth_mode":"chatgpt"}"#).unwrap();
+
+        let hints = codex_provider_hints(&root);
+        let hint = hints.get("openai").unwrap();
+        assert_eq!(hint.route_type, "official");
+        assert_eq!(hint.billing_channel, "official-subscription");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_builtin_provider_base_url_overrides_chatgpt_auth() {
+        let root = std::env::temp_dir().join(format!(
+            "usagemesh-evidence-override-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let codex_home = root.join(".codex");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(
+            codex_home.join("config.toml"),
+            r#"[model_providers.openai]
+base_url = "https://relay.example.com/v1"
+"#,
+        )
+        .unwrap();
+        std::fs::write(codex_home.join("auth.json"), r#"{"auth_mode":"chatgpt"}"#).unwrap();
+
+        let hints = codex_provider_hints(&root);
+        let hint = hints.get("openai").unwrap();
+        assert_eq!(hint.route_type, "relay");
+        assert_eq!(hint.billing_channel, "third-party");
 
         let _ = std::fs::remove_dir_all(root);
     }
