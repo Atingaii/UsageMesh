@@ -1,0 +1,5 @@
+UsageMesh v2.1.0
+- near-real-time 30-second sync target with overlap protection
+- encrypted request-level usage detail feed
+- exact event time, model, tier/speed, reasoning effort when available, token buckets, duration when available, and request-level estimated cost
+- dashboard live polling and automatic stable self-update migration
