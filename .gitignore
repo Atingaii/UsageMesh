@@ -1,5 +1,7 @@
 /rust-cli/target/
 /target/
+/web-ui/node_modules/
+/web-ui/dist/
 *.log
 .DS_Store
 Thumbs.db
