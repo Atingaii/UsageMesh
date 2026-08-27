@@ -9,6 +9,9 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="SECURITY.md">安全模型</a> · <a href="docs/PRICING.md">费用口径</a></p>
 
+> **在线演示：** `https://atingaii.github.io/UsageMesh/` · 密码：`usagemesh-demo`  
+> 演示工作区只包含人工生成的合成样例数据，不包含任何真实用户、设备或会话数据。
+
 ## UsageMesh 是什么
 
 UsageMesh 解决的是一个具体问题：当 Codex、Claude Code 等 AI Coding 工具分散运行在多台 Mac、Windows、Linux 设备上时，如何在**不自建服务器**的情况下统一查看 Token、请求、缓存、模型、设备和费用估算。
