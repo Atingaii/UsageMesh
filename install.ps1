@@ -158,9 +158,20 @@ try {
   }
   $Configured = ($StatusExitCode -eq 0)
   if ($Configured) {
-    Write-Host 'Existing UsageMesh configuration detected on this machine.'
-    Write-Host 'Refresh historical accounting after an upgrade with:'
-    Write-Host '  usagemesh sync --full'
+    Write-Host 'Existing UsageMesh configuration detected. Finishing the upgrade automatically...'
+    $SavedErrorActionPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      & $Binary sync --full
+      $SyncExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $SavedErrorActionPreference
+    }
+    if ($SyncExitCode -eq 0) {
+      Write-Host 'Upgrade complete. Existing workspace, password, devices and sync interval were preserved.'
+    } else {
+      Write-Warning 'UsageMesh was upgraded, but the automatic full refresh failed. The normal scheduler will retry on its next sync; you can also run usagemesh sync --full.'
+    }
   } else {
     Write-Host 'No local UsageMesh configuration detected on this machine.'
     Write-Host 'If this is the FIRST device for a new workspace:'
