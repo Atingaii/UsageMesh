@@ -50,12 +50,13 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: web-ui/package.json
+          cache-dependency-path: web-ui/package-lock.json
 
       - name: Validate dashboard source
         working-directory: web-ui
         shell: bash
         run: |
+          set -euo pipefail
           test -s src/app.tsx
           test -s public/usagemesh-icon.svg
           test -s public/device-index.json
@@ -67,9 +68,12 @@ jobs:
           grep -q "结构贡献" src/app.tsx
           grep -q "设备 × 模型用量矩阵" src/app.tsx
           grep -q "高消耗组合" src/app.tsx
-          grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
-          grep -q "sessionStorage" src/app.tsx
           grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
+          grep -q "envelope.iterations < 100_000" src/app.tsx
+          grep -q "Content-Security-Policy" index.html
+          grep -q "no-referrer" index.html
+          ! grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
+          ! grep -q "sessionStorage" src/app.tsx
           ! grep -q "isBundledDemoRepo" src/app.tsx
           ! grep -q "demo/access.json" src/app.tsx
           ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
