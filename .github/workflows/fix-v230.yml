@@ -58,13 +58,18 @@ jobs:
             echo 'Raw endpoint field leaked into a persisted/public schema.' >&2
             exit 1
           fi
-      - name: Commit verified fix and remove temporary files
+      - name: Commit verified source without workflow mutations
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'Atingaii'
           git config user.email 'zyaiting@email.swu.edu.cn'
-          git rm -f .github/scripts/fix_v230.py .github/scripts/fix_v230_followup.py .github/scripts/fix_v230_repair.py .github/workflows/fix-v230.yml
+          # GitHub Actions tokens cannot modify workflow files. The dedicated
+          # verifier above already enforces the new invariants, so restore the
+          # permanent workflow and leave this temporary workflow for direct
+          # connector cleanup after the verified source commit lands.
+          git checkout HEAD -- .github/workflows/rust-cli-ci.yml .github/workflows/fix-v230.yml
+          git rm -f .github/scripts/fix_v230.py .github/scripts/fix_v230_followup.py .github/scripts/fix_v230_repair.py
           git add -A
           git commit -m 'fix: use official time-aware pricing and local endpoint route evidence'
           git push origin HEAD:main
