@@ -24,13 +24,40 @@ UsageMesh is for people who use AI coding tools on more than one machine and wan
 
 ## Quick start
 
-### 1. Fork this repository
+### 1. Fork this repository and enable Pages
 
 Fork `Atingaii/UsageMesh` to your own account and keep the fork **public**. The browser dashboard must be able to read ciphertext without a server-side GitHub session; device details are encrypted before upload.
 
-GitHub does not automatically execute workflows in a new public fork. Open the fork's **Actions** tab once, enable workflows, then run **Deploy Dashboard**. If Pages is not enabled yet, choose **Settings → Pages → Source → GitHub Actions** and rerun **Deploy Dashboard**.
+GitHub does not automatically execute workflows in a new public fork. Open your fork's **Actions** tab once, enable workflows, then run **Deploy Dashboard**. If Pages is not enabled yet, choose **Settings → Pages → Source → GitHub Actions** and rerun **Deploy Dashboard**.
 
-### 2. Install the CLI
+### 2. Prepare GitHub authentication — GitHub CLI is not required
+
+UsageMesh needs write access to **your fork only** so each device can update its encrypted ledger branches. The recommended least-privilege path is a fine-grained personal access token:
+
+1. Open GitHub **Settings → Developer settings → Personal access tokens → Fine-grained tokens**, or go directly to [Generate new token](https://github.com/settings/personal-access-tokens/new).
+2. Select your own account as **Resource owner**.
+3. Choose **Only select repositories** and select your `UsageMesh` fork only.
+4. Grant **Contents: Read and write**. Device synchronization does not require additional repository permissions.
+5. Set a reasonable expiration date and generate the token. Copy the `github_pat_...` value while GitHub shows it.
+
+**Do not put the PAT in the install command.** Later, when you run `usagemesh setup`, UsageMesh will show a hidden prompt if no other GitHub credential is available:
+
+```text
+GitHub token (hidden; stored locally for scheduled sync):
+```
+
+Paste the `github_pat_...` value and press Enter. No characters are echoed while pasting; that is expected.
+
+If GitHub CLI is already installed and authenticated, you may use it instead:
+
+```bash
+gh auth login
+gh auth status
+```
+
+UsageMesh will automatically try `gh auth token`. **GitHub CLI is optional and is not a UsageMesh dependency.**
+
+### 3. Install and initialize UsageMesh
 
 macOS / Linux:
 
@@ -46,38 +73,17 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` discovers your `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native periodic scheduler unless you pass `--no-schedule`.
+`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native periodic scheduler unless you pass `--no-schedule`.
 
-### 3. Open your dashboard
+Credential lookup order is: explicit `--token` → `USAGEMESH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN` → authenticated `gh auth token` → **hidden PAT prompt**. Regular users should avoid `--token` so credentials are not left in shell history.
+
+### 4. Open your dashboard
 
 ```bash
 usagemesh dashboard
 ```
 
-Use the exact URL printed by the CLI. It is derived from the actual fork name and remains correct if the fork was renamed.
-
-## GitHub authentication
-
-UsageMesh needs write access to **your fork only** so each device can update its encrypted ledger branch.
-
-If GitHub CLI is already authenticated, UsageMesh can use that credential:
-
-```bash
-gh auth login
-gh auth status
-usagemesh setup
-```
-
-For least privilege, create a **fine-grained personal access token** after you fork:
-
-1. GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained tokens**.
-2. Select your account as **Resource owner**.
-3. Choose **Only select repositories** → your `UsageMesh` fork.
-4. Grant **Contents: Read and write**. Device synchronization does not require additional repository permissions.
-5. Set a reasonable expiration date and generate the token.
-6. Run `usagemesh setup` and paste the `github_pat_...` value at the hidden prompt.
-
-Never paste a PAT into a shell command, README, issue, screenshot or pair code. UsageMesh never uploads your GitHub credential. A pasted credential is kept only in this machine's local configuration so scheduled sync can continue; on Unix the file is mode `0600`. Use a short-lived, repository-scoped token and protect the operating-system account itself.
+The URL is derived from the actual fork. For example, if the GitHub account is `alice` and the fork is still named `UsageMesh`, the URL is `https://alice.github.io/UsageMesh/`. If the fork was renamed, initialize with `usagemesh setup --repo OWNER/RENAMED_REPO`; the dashboard URL is then generated from that real repository name.
 
 ## Add another device
 
@@ -87,12 +93,13 @@ On an existing device:
 usagemesh invite
 ```
 
-Copy the generated `usagemesh join '...'` command to the new device, install UsageMesh there, and run it. The pair code contains the workspace encryption key and repository identity, **not** your GitHub token; treat the pair code as a secret anyway.
+Copy the generated `usagemesh join '...'` command to the new device. The pair code contains the workspace encryption key and repository identity, **not** your GitHub token; treat it as a secret anyway.
 
-Then verify:
+The new device still needs its own GitHub write credential. It can use a fine-grained PAT or an already-authenticated GitHub CLI session. A successful `join` performs the initial full sync, so an immediate `sync --full` is normally unnecessary.
+
+Verify with:
 
 ```bash
-usagemesh sync --full
 usagemesh status
 ```
 
@@ -130,6 +137,8 @@ UsageMesh is not designed to upload raw prompts, responses, reasoning text, sour
 ## Security model
 
 The dashboard password itself is never stored in the browser. After unlock, the decrypted workspace key is kept only in `sessionStorage`: normal refreshes stay unlocked, while closing the browser session requires the password again. See [SECURITY.md](SECURITY.md) for the threat model and limitations.
+
+A pasted GitHub credential is stored only in the local UsageMesh configuration so scheduled sync can run non-interactively; Unix configuration files are mode `0600`. Use a short-lived, repository-scoped token and protect the operating-system account itself.
 
 No client-side system can promise “absolute security.” UsageMesh instead minimizes privilege, encrypts data before upload, avoids secrets in URLs, and documents the remaining trust boundaries explicitly.
 
