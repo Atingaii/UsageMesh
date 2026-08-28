@@ -397,7 +397,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let accounting_unchanged = previous_for_compare
         .as_ref()
         .is_some_and(|previous| collector::same_accounting(previous, &ledger));
-    if accounting_unchanged && !version_migration && !schema_migration {
+    if accounting_unchanged && !version_migration && !schema_migration && !pricing_migration {
         // A manual full sync is also the migration/repair path for the static
         // dashboard index. Refresh it even when accounting itself is unchanged.
         if full {
