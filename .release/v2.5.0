@@ -1,0 +1,10 @@
+UsageMesh 2.5.0 resident-agent and device-presence release.
+- Normal installations now use one OS-supervised resident synchronization loop instead of launching overlapping one-shot sync processes every 30 seconds.
+- The first local collection is a full baseline; steady-state collection is incremental with a short overlap window for still-growing sessions.
+- Full rescans are reserved for explicit sync --full and migrations such as app-version, ledger-schema or pricing-policy changes.
+- macOS uses launchd with RunAtLoad + KeepAlive; Linux prefers a systemd --user service with Restart=always and has a cron watchdog fallback; Windows uses a hidden resident PowerShell loop with Task Scheduler watchdog/relaunch behavior.
+- Legacy v2.4 periodic schedulers are retired only after the v2.5 resident supervisor is installed and its scheduler revision is durably saved.
+- Device liveness is now independent from usage freshness through per-device um-presence-* heartbeat branches.
+- Presence heartbeats are published about once per minute, while encrypted um-ledger-* snapshots are rewritten only when accounting changes or a migration requires refreshed metadata.
+- The dashboard drives Online / Heartbeat delayed / Offline from presence heartbeats and keeps the displayed last-sync time tied to usage-ledger freshness, with backward-compatible fallback for older clients.
+- Removing a device cleans up both its ledger and presence branches.
