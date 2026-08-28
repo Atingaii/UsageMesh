@@ -1,0 +1,68 @@
+name: Temporary migration safety patch
+
+on:
+  push:
+    branches: [feat/resident-agent-presence]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[migration-safe]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/resident-agent-presence
+      - name: Patch migration handoff and docs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, got {count}')
+              return text.replace(old, new, 1)
+
+          main_path = Path('rust-cli/src/main.rs')
+          main = main_path.read_text(encoding='utf-8')
+          main = replace_once(
+              main,
+              '    let mut config = config;\n    let mut save_config = false;\n',
+              '    let mut config = config;\n    let mut save_config = false;\n    let mut cleanup_legacy_scheduler = false;\n',
+              'migration cleanup declaration',
+          )
+          main = replace_once(
+              main,
+              '                config.scheduler_revision = scheduler::revision();\n                save_config = true;\n                if !quiet {',
+              '                config.scheduler_revision = scheduler::revision();\n                save_config = true;\n                cleanup_legacy_scheduler = true;\n                if !quiet {',
+              'migration cleanup flag',
+          )
+          main = replace_once(
+              main,
+              '    if save_config {\n        config::save(&config).context("failed to persist the resident sync configuration")?;\n    }\n\n    // Interactive syncs may overlap',
+              '    if save_config {\n        config::save(&config).context("failed to persist the resident sync configuration")?;\n    }\n    if cleanup_legacy_scheduler {\n        // The new resident supervisor has a distinct native job/unit name. Retire\n        // the legacy periodic scheduler only after revision 5 is durable, so an\n        // upgrade never unloads the job that launched it before the replacement\n        // is ready. On platforms where cleanup terminates this legacy invocation,\n        // the resident agent immediately continues the migration scan.\n        scheduler::cleanup_legacy();\n    }\n\n    // Interactive syncs may overlap',
+              'migration cleanup call',
+          )
+          main_path.write_text(main, encoding='utf-8')
+
+          readme_path = Path('README.md')
+          readme = readme_path.read_text(encoding='utf-8')
+          readme = replace_once(
+              readme,
+              'Windows starts a hidden resident PowerShell loop through Task Scheduler at sign-in.',
+              'Windows runs a hidden resident PowerShell loop with a one-minute Task Scheduler watchdog, which also relaunches the loop if its supervisor process exits.',
+              'Windows resident documentation',
+          )
+          readme_path.write_text(readme, encoding='utf-8')
+      - name: Commit migration safety patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust-cli/src/main.rs README.md
+          git diff --cached --check
+          git commit -m 'fix: hand off legacy schedulers safely during v2.5 upgrade [migration-safe]'
+          git push origin HEAD:feat/resident-agent-presence
