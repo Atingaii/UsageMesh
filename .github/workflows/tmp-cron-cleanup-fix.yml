@@ -21,52 +21,8 @@ jobs:
           from pathlib import Path
           path = Path('rust-cli/src/scheduler.rs')
           text = path.read_text(encoding='utf-8')
-          anchor = '''#[cfg(target_os = "linux")]
-fn install_cron() -> Result<String> {
-    let runner = write_unix_runner()?;
-    rewrite_crontab(true, Some(&runner))?;
-    let _ = Command::new(&runner).arg("--ensure").output();
-    Ok("cron-supervised resident sync agent (boot start + one-minute watchdog)".to_string())
-}
-'''
-          helper = '''#[cfg(target_os = "linux")]
-fn remove_legacy_cron_entries() -> Result<()> {
-    if Command::new("crontab").arg("-l").output().is_err() {
-        return Ok(());
-    }
-    let existing = Command::new("crontab")
-        .arg("-l")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
-        .unwrap_or_default();
-    if existing.is_empty() || !existing.contains("# usagemesh-usage-sync") {
-        return Ok(());
-    }
-    let cleaned = existing
-        .lines()
-        .filter(|line| !line.contains("# usagemesh-usage-sync"))
-        .collect::<Vec<_>>()
-        .join("\\n");
-    let mut child = Command::new("crontab")
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to start crontab")?;
-    use std::io::Write;
-    child
-        .stdin
-        .as_mut()
-        .context("crontab stdin unavailable")?
-        .write_all(format!("{cleaned}\\n").as_bytes())?;
-    if !child.wait()?.success() {
-        bail!("crontab legacy cleanup failed");
-    }
-    Ok(())
-}
-
-'''
+          anchor = '#[cfg(target_os = "linux")]\nfn install_cron() -> Result<String> {\n    let runner = write_unix_runner()?;\n    rewrite_crontab(true, Some(&runner))?;\n    let _ = Command::new(&runner).arg("--ensure").output();\n    Ok("cron-supervised resident sync agent (boot start + one-minute watchdog)".to_string())\n}\n'
+          helper = '#[cfg(target_os = "linux")]\nfn remove_legacy_cron_entries() -> Result<()> {\n    if Command::new("crontab").arg("-l").output().is_err() {\n        return Ok(());\n    }\n    let existing = Command::new("crontab")\n        .arg("-l")\n        .output()\n        .ok()\n        .filter(|output| output.status.success())\n        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())\n        .unwrap_or_default();\n    if existing.is_empty() || !existing.contains("# usagemesh-usage-sync") {\n        return Ok(());\n    }\n    let cleaned = existing\n        .lines()\n        .filter(|line| !line.contains("# usagemesh-usage-sync"))\n        .collect::<Vec<_>>()\n        .join("\\n");\n    let mut child = Command::new("crontab")\n        .arg("-")\n        .stdin(std::process::Stdio::piped())\n        .spawn()\n        .context("failed to start crontab")?;\n    use std::io::Write;\n    child\n        .stdin\n        .as_mut()\n        .context("crontab stdin unavailable")?\n        .write_all(format!("{cleaned}\\n").as_bytes())?;\n    if !child.wait()?.success() {\n        bail!("crontab legacy cleanup failed");\n    }\n    Ok(())\n}\n\n'
           if text.count(anchor) != 1:
               raise SystemExit('install_cron anchor mismatch')
           text = text.replace(anchor, helper + anchor, 1)
