@@ -1,0 +1,87 @@
+name: Temporary cron cleanup fix
+
+on:
+  push:
+    branches: [feat/resident-agent-presence]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[cron-cleanup-fixed]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/resident-agent-presence
+      - name: Preserve resident cron watchdog during legacy cleanup
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('rust-cli/src/scheduler.rs')
+          text = path.read_text(encoding='utf-8')
+          anchor = '''#[cfg(target_os = "linux")]
+fn install_cron() -> Result<String> {
+    let runner = write_unix_runner()?;
+    rewrite_crontab(true, Some(&runner))?;
+    let _ = Command::new(&runner).arg("--ensure").output();
+    Ok("cron-supervised resident sync agent (boot start + one-minute watchdog)".to_string())
+}
+'''
+          helper = '''#[cfg(target_os = "linux")]
+fn remove_legacy_cron_entries() -> Result<()> {
+    if Command::new("crontab").arg("-l").output().is_err() {
+        return Ok(());
+    }
+    let existing = Command::new("crontab")
+        .arg("-l")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default();
+    if existing.is_empty() || !existing.contains("# usagemesh-usage-sync") {
+        return Ok(());
+    }
+    let cleaned = existing
+        .lines()
+        .filter(|line| !line.contains("# usagemesh-usage-sync"))
+        .collect::<Vec<_>>()
+        .join("\\n");
+    let mut child = Command::new("crontab")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to start crontab")?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .context("crontab stdin unavailable")?
+        .write_all(format!("{cleaned}\\n").as_bytes())?;
+    if !child.wait()?.success() {
+        bail!("crontab legacy cleanup failed");
+    }
+    Ok(())
+}
+
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit('install_cron anchor mismatch')
+          text = text.replace(anchor, helper + anchor, 1)
+          old = '    let _ = rewrite_crontab(true, None);\n}\n\n#[cfg(target_os = "linux")]\nfn uninstall_linux()'
+          new = '    // Preserve the new cron resident-agent watchdog when systemd is unavailable;\n    // only the pre-v2.5 two-entry sync schedule is legacy here.\n    let _ = remove_legacy_cron_entries();\n}\n\n#[cfg(target_os = "linux")]\nfn uninstall_linux()'
+          if text.count(old) != 1:
+              raise SystemExit('cleanup_legacy_linux anchor mismatch')
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust-cli/src/scheduler.rs
+          git diff --cached --check
+          git commit -m 'fix: preserve cron resident watchdog after migration [cron-cleanup-fixed]'
+          git push origin HEAD:feat/resident-agent-presence
