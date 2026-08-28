@@ -352,6 +352,7 @@ const RAW = 'https://raw.githubusercontent.com';
 const DEFAULT_REPO = 'Atingaii/UsageMesh';
 const ACCESS_BRANCH = 'um-dashboard';
 const DEVICE_INDEX_BRANCH = 'um-index';
+const PRESENCE_BRANCH_PREFIX = 'um-presence-';
 const ACCESS_AAD_PREFIX = 'usagemesh-dashboard-access-v1:';
 const LEDGER_AAD_PREFIX = 'usagemesh-ledger-v2:';
 interface AccessEnvelope {
@@ -374,6 +375,14 @@ interface LedgerEnvelope {
   algorithm: string;
   nonce: string;
   ciphertext: string;
+}
+
+interface DevicePresence {
+  schemaVersion: number;
+  kind: string;
+  deviceHash: string;
+  updatedAt: string;
+  appVersion?: string;
 }
 
 interface LedgerRow {
@@ -423,6 +432,7 @@ interface LedgerRequest {
 interface Ledger {
   schemaVersion?: number;
   generatedAt?: string;
+  presenceUpdatedAt?: string;
   device?: {
     id?: string;
     name?: string;
@@ -535,7 +545,20 @@ async function decryptLedger(repo: string, branch: string, encodedKey: string): 
       key,
       b64url(envelope.ciphertext),
     );
-    return JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+    const ledger = JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+    try {
+      const presence = await json<DevicePresence>(`${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${envelope.deviceHash}/presence.json`);
+      if (
+        presence.kind === 'usagemesh-device-presence' &&
+        presence.schemaVersion === 1 &&
+        presence.deviceHash === envelope.deviceHash
+      ) {
+        ledger.presenceUpdatedAt = String(presence.updatedAt || '');
+      }
+    } catch {
+      // Backward compatibility: pre-resident-agent devices have no presence branch.
+    }
+    return ledger;
   } catch {
     throw new Error(`设备账本解密失败 (${branch})`);
   }
@@ -671,7 +694,7 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
 }
 
 
-function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string } {
+function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string; presenceAt: string } {
   const id = String(ledger.device?.id || ledger.device?.name || 'unknown-device');
   return {
     id,
@@ -679,6 +702,7 @@ function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform
     platform: String(ledger.device?.platform || 'unknown'),
     arch: String(ledger.device?.arch || ''),
     updatedAt: String(ledger.generatedAt || ''),
+    presenceAt: String(ledger.presenceUpdatedAt || ''),
   };
 }
 
@@ -698,7 +722,7 @@ function deviceSyncStatus(updatedAt: string): DeviceInfo['status'] {
   const ts = Date.parse(updatedAt);
   if (!Number.isFinite(ts)) return 'offline';
   const age = Math.max(0, Date.now() - ts);
-  if (age <= 2 * 60_000) return 'online';
+  if (age <= 3 * 60_000) return 'online';
   if (age <= 10 * 60_000) return 'syncing';
   return 'offline';
 }
@@ -726,7 +750,7 @@ function buildDeviceRows(ledgers: Ledger[], records: UsageRecord[], labels: Map<
       cost: item.cost,
       requestsCount: item.requests,
       sharePercentage: item.tokens / total * 100,
-      status: deviceSyncStatus(identity.updatedAt),
+      status: deviceSyncStatus(identity.presenceAt || identity.updatedAt),
     };
   }).sort((a, b) => b.totalTokens - a.totalTokens || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
 }
@@ -1146,7 +1170,7 @@ const BreakdownCards: React.FC<BreakdownCardsProps> = ({ records }) => {
 
 function deviceStatusBadge(status: DeviceInfo['status']) {
   if (status === 'online') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />在线</span>;
-  if (status === 'syncing') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />最近同步</span>;
+  if (status === 'syncing') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />心跳延迟</span>;
   if (status === 'error') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />异常</span>;
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-slate-400" />离线</span>;
 }
