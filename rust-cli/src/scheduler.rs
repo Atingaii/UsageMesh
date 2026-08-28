@@ -575,6 +575,43 @@ fn rewrite_crontab(remove_legacy: bool, ensure_resident: Option<&Path>) -> Resul
 }
 
 #[cfg(target_os = "linux")]
+fn remove_legacy_cron_entries() -> Result<()> {
+    if Command::new("crontab").arg("-l").output().is_err() {
+        return Ok(());
+    }
+    let existing = Command::new("crontab")
+        .arg("-l")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default();
+    if existing.is_empty() || !existing.contains("# usagemesh-usage-sync") {
+        return Ok(());
+    }
+    let cleaned = existing
+        .lines()
+        .filter(|line| !line.contains("# usagemesh-usage-sync"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut child = Command::new("crontab")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("failed to start crontab")?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .context("crontab stdin unavailable")?
+        .write_all(format!("{cleaned}\n").as_bytes())?;
+    if !child.wait()?.success() {
+        bail!("crontab legacy cleanup failed");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn install_cron() -> Result<String> {
     let runner = write_unix_runner()?;
     rewrite_crontab(true, Some(&runner))?;
@@ -614,7 +651,9 @@ fn cleanup_legacy_linux() {
             .args(["--user", "daemon-reload"])
             .output();
     }
-    let _ = rewrite_crontab(true, None);
+    // Preserve the new cron resident-agent watchdog when systemd is unavailable;
+    // only the pre-v2.5 two-entry sync schedule is legacy here.
+    let _ = remove_legacy_cron_entries();
 }
 
 #[cfg(target_os = "linux")]
