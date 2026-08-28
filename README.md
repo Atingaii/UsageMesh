@@ -99,7 +99,7 @@ Automatic updates can be disabled for controlled environments with `USAGEMESH_AU
 
 ## Resident synchronization and presence
 
-Starting with **v2.5.0**, UsageMesh keeps one lightweight synchronization loop resident under the native OS supervisor: macOS uses `launchd` with `RunAtLoad` + `KeepAlive`; Linux prefers a `systemd --user` service with `Restart=always` and attempts to enable user lingering, with a cron watchdog fallback; Windows starts a hidden resident PowerShell loop through Task Scheduler at sign-in. Each loop waits for the current scan to finish before sleeping 30 seconds, so routine synchronization no longer creates overlapping timer ticks.
+Starting with **v2.5.0**, UsageMesh keeps one lightweight synchronization loop resident under the native OS supervisor: macOS uses `launchd` with `RunAtLoad` + `KeepAlive`; Linux prefers a `systemd --user` service with `Restart=always` and attempts to enable user lingering, with a cron watchdog fallback; Windows runs a hidden resident PowerShell loop with a one-minute Task Scheduler watchdog, which also relaunches the loop if its supervisor process exits. Each loop waits for the current scan to finish before sleeping 30 seconds, so routine synchronization no longer creates overlapping timer ticks.
 
 The first local scan is full. Normal subsequent scans are incremental and intentionally re-read only a short two-day overlap window so sessions that are still being appended can be reconciled safely. Full rescans are reserved for explicit `sync --full` and migrations such as a new UsageMesh version, ledger schema or pricing policy.
 

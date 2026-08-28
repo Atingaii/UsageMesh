@@ -287,6 +287,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     // --no-schedule devices remain manual.
     let mut config = config;
     let mut save_config = false;
+    let mut cleanup_legacy_scheduler = false;
     if config.interval_seconds != scheduler::SYNC_INTERVAL_SECONDS {
         config.interval_seconds = scheduler::SYNC_INTERVAL_SECONDS;
         save_config = true;
@@ -296,6 +297,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
             Ok(description) => {
                 config.scheduler_revision = scheduler::revision();
                 save_config = true;
+                cleanup_legacy_scheduler = true;
                 if !quiet {
                     println!("Automatic sync agent migrated: {description}");
                 }
@@ -309,6 +311,14 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     }
     if save_config {
         config::save(&config).context("failed to persist the resident sync configuration")?;
+    }
+    if cleanup_legacy_scheduler {
+        // The new resident supervisor has a distinct native job/unit name. Retire
+        // the legacy periodic scheduler only after revision 5 is durable, so an
+        // upgrade never unloads the job that launched it before the replacement
+        // is ready. On platforms where cleanup terminates this legacy invocation,
+        // the resident agent immediately continues the migration scan.
+        scheduler::cleanup_legacy();
     }
 
     // Interactive syncs may overlap the resident wrapper's current child. Wait
