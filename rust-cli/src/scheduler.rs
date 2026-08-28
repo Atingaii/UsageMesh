@@ -8,7 +8,16 @@ pub const SYNC_INTERVAL_SECONDS: u32 = 30;
 const SCHEDULER_REVISION: u32 = 5;
 
 #[cfg(target_os = "windows")]
-const TASK_NAME: &str = "UsageMeshUsageSync";
+const RESIDENT_TASK_NAME: &str = "UsageMeshResidentAgent";
+#[cfg(target_os = "windows")]
+const LEGACY_TASK_NAME: &str = "UsageMeshUsageSync";
+
+#[cfg(target_os = "linux")]
+const RESIDENT_SERVICE_NAME: &str = "usagemesh-agent.service";
+#[cfg(target_os = "linux")]
+const LEGACY_SERVICE_NAME: &str = "usagemesh.service";
+#[cfg(target_os = "linux")]
+const LEGACY_TIMER_NAME: &str = "usagemesh.timer";
 
 fn executable() -> Result<PathBuf> {
     std::env::current_exe().context("cannot locate usagemesh executable")
@@ -35,6 +44,20 @@ pub fn install(_interval_seconds: u32) -> Result<String> {
     bail!("automatic scheduling is not supported on this platform")
 }
 
+/// Remove pre-v2.5 periodic schedulers after the resident supervisor is known to
+/// be installed and the new scheduler revision has been persisted. Keeping the
+/// old and new jobs under different native names is deliberate: an upgrading
+/// `sync` can safely create the resident job before retiring the scheduler that
+/// launched that very process.
+pub fn cleanup_legacy() {
+    #[cfg(target_os = "windows")]
+    cleanup_legacy_windows();
+    #[cfg(target_os = "macos")]
+    cleanup_legacy_macos();
+    #[cfg(target_os = "linux")]
+    cleanup_legacy_linux();
+}
+
 pub fn uninstall() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -52,26 +75,36 @@ pub fn uninstall() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn windows_task_exists(name: &str) -> bool {
+    Command::new("schtasks.exe")
+        .args(["/Query", "/TN", name])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 pub fn is_installed() -> bool {
     #[cfg(target_os = "windows")]
     {
-        return Command::new("schtasks.exe")
-            .args(["/Query", "/TN", TASK_NAME])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
+        return windows_task_exists(RESIDENT_TASK_NAME) || windows_task_exists(LEGACY_TASK_NAME);
     }
     #[cfg(target_os = "macos")]
     {
-        return launch_agent_path()
+        return resident_launch_agent_path()
             .map(|path| path.is_file())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || legacy_launch_agent_path()
+                .map(|path| path.is_file())
+                .unwrap_or(false);
     }
     #[cfg(target_os = "linux")]
     {
         if systemd_dir()
             .map(|dir| {
-                dir.join("usagemesh.service").is_file() || dir.join("usagemesh.timer").is_file()
+                dir.join(RESIDENT_SERVICE_NAME).is_file()
+                    || dir.join(LEGACY_TIMER_NAME).is_file()
+                    || dir.join(LEGACY_SERVICE_NAME).is_file()
             })
             .unwrap_or(false)
         {
@@ -138,6 +171,13 @@ PID_FILE={pid}
 USAGEMESH_BIN={exe}
 
 run_loop() {{
+  if [ -f "$PID_FILE" ]; then
+    old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null && [ "$old_pid" != "$$" ]; then
+      exit 0
+    fi
+    rm -f "$PID_FILE"
+  fi
   printf '%s\n' "$$" > "$PID_FILE"
   trap 'rm -f "$PID_FILE"; exit 0' INT TERM EXIT
   while :; do
@@ -199,40 +239,75 @@ fn install_windows() -> Result<String> {
         "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{}\"",
         runner.display()
     );
+
+    // Keep a one-minute native trigger as a watchdog. Task Scheduler's normal
+    // single-instance behavior ignores the trigger while the resident process is
+    // alive; if PowerShell itself exits unexpectedly, the next trigger relaunches
+    // the loop. /Run starts it immediately after install/migration.
     let mut cmd = Command::new("schtasks.exe");
     cmd.args([
         "/Create",
         "/F",
         "/SC",
-        "ONLOGON",
+        "MINUTE",
+        "/MO",
+        "1",
         "/TN",
-        TASK_NAME,
+        RESIDENT_TASK_NAME,
         "/TR",
         &action,
     ]);
     run_ok(cmd, "Windows resident Task Scheduler registration")?;
     let _ = Command::new("schtasks.exe")
-        .args(["/Run", "/TN", TASK_NAME])
+        .args(["/Run", "/TN", RESIDENT_TASK_NAME])
         .output();
-    Ok("Windows resident sync agent (starts at sign-in, 30-second incremental loop)".to_string())
+    Ok("Windows resident sync agent (30-second loop with one-minute Task Scheduler watchdog)".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn cleanup_legacy_windows() {
+    if LEGACY_TASK_NAME == RESIDENT_TASK_NAME {
+        return;
+    }
+    let _ = Command::new("schtasks.exe")
+        .args(["/End", "/TN", LEGACY_TASK_NAME])
+        .output();
+    let _ = Command::new("schtasks.exe")
+        .args(["/Delete", "/F", "/TN", LEGACY_TASK_NAME])
+        .output();
+    if let Ok(path) = crate::config::config_dir().map(|dir| dir.join("sync-30s.ps1")) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 #[cfg(target_os = "windows")]
 fn uninstall_windows() -> Result<()> {
-    let _ = Command::new("schtasks.exe")
-        .args(["/End", "/TN", TASK_NAME])
-        .output();
-    let _ = Command::new("schtasks.exe")
-        .args(["/Delete", "/F", "/TN", TASK_NAME])
-        .output();
+    for task in [RESIDENT_TASK_NAME, LEGACY_TASK_NAME] {
+        let _ = Command::new("schtasks.exe")
+            .args(["/End", "/TN", task])
+            .output();
+        let _ = Command::new("schtasks.exe")
+            .args(["/Delete", "/F", "/TN", task])
+            .output();
+    }
     if let Ok(path) = windows_runner_path() {
+        let _ = fs::remove_file(path);
+    }
+    if let Ok(path) = crate::config::config_dir().map(|dir| dir.join("sync-30s.ps1")) {
         let _ = fs::remove_file(path);
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn launch_agent_path() -> Result<PathBuf> {
+fn resident_launch_agent_path() -> Result<PathBuf> {
+    Ok(dirs::home_dir()
+        .context("cannot determine home directory")?
+        .join("Library/LaunchAgents/io.atingaii.usagemesh.agent.plist"))
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_launch_agent_path() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("cannot determine home directory")?
         .join("Library/LaunchAgents/io.atingaii.usagemesh.plist"))
@@ -301,9 +376,18 @@ fn mac_uid() -> Result<String> {
 }
 
 #[cfg(target_os = "macos")]
+fn resident_job_loaded(domain: &str) -> bool {
+    Command::new("launchctl")
+        .args(["print", &format!("{domain}/io.atingaii.usagemesh.agent")])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
 fn install_macos() -> Result<String> {
     let runner = write_unix_runner()?;
-    let path = launch_agent_path()?;
+    let path = resident_launch_agent_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -312,7 +396,7 @@ fn install_macos() -> Result<String> {
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>Label</key><string>io.atingaii.usagemesh</string>
+<key>Label</key><string>io.atingaii.usagemesh.agent</string>
 <key>ProgramArguments</key><array><string>{}</string><string>--run</string></array>
 {}
 <key>RunAtLoad</key><true/>
@@ -327,12 +411,11 @@ fn install_macos() -> Result<String> {
     );
     fs::write(&path, plist)?;
     let domain = format!("gui/{}", mac_uid()?);
-    let _ = Command::new("launchctl")
-        .args(["bootout", &domain, path.to_string_lossy().as_ref()])
-        .output();
-    let mut bootstrap = Command::new("launchctl");
-    bootstrap.args(["bootstrap", &domain, path.to_string_lossy().as_ref()]);
-    run_ok(bootstrap, "macOS launchd resident-agent registration")?;
+    if !resident_job_loaded(&domain) {
+        let mut bootstrap = Command::new("launchctl");
+        bootstrap.args(["bootstrap", &domain, path.to_string_lossy().as_ref()]);
+        run_ok(bootstrap, "macOS launchd resident-agent registration")?;
+    }
     Ok("macOS launchd resident sync agent (RunAtLoad + KeepAlive, 30-second incremental loop)".to_string())
 }
 
@@ -357,13 +440,29 @@ mod macos_tests {
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall_macos() -> Result<()> {
-    let path = launch_agent_path()?;
-    let domain = format!("gui/{}", mac_uid()?);
+fn cleanup_legacy_macos() {
+    let Ok(path) = legacy_launch_agent_path() else {
+        return;
+    };
+    let Ok(uid) = mac_uid() else {
+        return;
+    };
+    let domain = format!("gui/{uid}");
     let _ = Command::new("launchctl")
         .args(["bootout", &domain, path.to_string_lossy().as_ref()])
         .output();
     let _ = fs::remove_file(path);
+}
+
+#[cfg(target_os = "macos")]
+fn uninstall_macos() -> Result<()> {
+    let domain = format!("gui/{}", mac_uid()?);
+    for path in [resident_launch_agent_path()?, legacy_launch_agent_path()?] {
+        let _ = Command::new("launchctl")
+            .args(["bootout", &domain, path.to_string_lossy().as_ref()])
+            .output();
+        let _ = fs::remove_file(path);
+    }
     if let Ok(path) = unix_runner_path() {
         let _ = fs::remove_file(path);
     }
@@ -413,16 +512,11 @@ fn try_install_systemd() -> Result<String> {
     let dir = systemd_dir()?;
     fs::create_dir_all(&dir)?;
 
-    let _ = Command::new("systemctl")
-        .args(["--user", "disable", "--now", "usagemesh.timer"])
-        .output();
-    let _ = fs::remove_file(dir.join("usagemesh.timer"));
-
     let service = format!(
         "[Unit]\nDescription=UsageMesh resident sync agent\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} --run\nRestart=always\nRestartSec=5s\nNice=10\nIOSchedulingClass=idle\n\n[Install]\nWantedBy=default.target\n",
         systemd_exec_path(&runner)
     );
-    fs::write(dir.join("usagemesh.service"), service)?;
+    fs::write(dir.join(RESIDENT_SERVICE_NAME), service)?;
 
     let mut reload = Command::new("systemctl");
     reload.args(["--user", "daemon-reload"]);
@@ -431,17 +525,16 @@ fn try_install_systemd() -> Result<String> {
     try_enable_linger();
 
     let mut enable = Command::new("systemctl");
-    enable.args(["--user", "enable", "--now", "usagemesh.service"]);
+    enable.args(["--user", "enable", "--now", RESIDENT_SERVICE_NAME]);
     run_ok(enable, "systemd resident-agent registration")?;
     Ok("systemd --user resident sync agent (Restart=always, 30-second incremental loop)".to_string())
 }
 
 #[cfg(target_os = "linux")]
-fn install_cron() -> Result<String> {
+fn rewrite_crontab(remove_legacy: bool, ensure_resident: Option<&Path>) -> Result<()> {
     if Command::new("crontab").arg("-l").output().is_err() {
-        bail!("neither a usable systemd --user session nor crontab is available; run usagemesh sync manually")
+        bail!("crontab is unavailable")
     }
-    let runner = write_unix_runner()?;
     let existing = Command::new("crontab")
         .arg("-l")
         .output()
@@ -451,19 +544,19 @@ fn install_cron() -> Result<String> {
         .unwrap_or_default();
     let mut lines: Vec<String> = existing
         .lines()
-        .filter(|line| {
-            !line.contains("# usagemesh-resident-agent")
-                && !line.contains("# usagemesh-usage-sync")
-        })
+        .filter(|line| !line.contains("# usagemesh-resident-agent"))
+        .filter(|line| !remove_legacy || !line.contains("# usagemesh-usage-sync"))
         .map(str::to_string)
         .collect();
-    let quoted = shell_single_quote(&runner.to_string_lossy());
-    lines.push(format!(
-        "@reboot {quoted} --ensure # usagemesh-resident-agent"
-    ));
-    lines.push(format!(
-        "* * * * * {quoted} --ensure # usagemesh-resident-agent"
-    ));
+    if let Some(runner) = ensure_resident {
+        let quoted = shell_single_quote(&runner.to_string_lossy());
+        lines.push(format!(
+            "@reboot {quoted} --ensure # usagemesh-resident-agent"
+        ));
+        lines.push(format!(
+            "* * * * * {quoted} --ensure # usagemesh-resident-agent"
+        ));
+    }
     let mut child = Command::new("crontab")
         .arg("-")
         .stdin(std::process::Stdio::piped())
@@ -478,6 +571,13 @@ fn install_cron() -> Result<String> {
     if !child.wait()?.success() {
         bail!("crontab registration failed");
     }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn install_cron() -> Result<String> {
+    let runner = write_unix_runner()?;
+    rewrite_crontab(true, Some(&runner))?;
     let _ = Command::new(&runner).arg("--ensure").output();
     Ok("cron-supervised resident sync agent (boot start + one-minute watchdog)".to_string())
 }
@@ -489,8 +589,7 @@ fn install_linux() -> Result<String> {
             Ok(description) => return Ok(description),
             Err(systemd_error) => {
                 if let Ok(dir) = systemd_dir() {
-                    let _ = fs::remove_file(dir.join("usagemesh.timer"));
-                    let _ = fs::remove_file(dir.join("usagemesh.service"));
+                    let _ = fs::remove_file(dir.join(RESIDENT_SERVICE_NAME));
                 }
                 return install_cron().with_context(|| {
                     format!(
@@ -504,45 +603,36 @@ fn install_linux() -> Result<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn uninstall_linux() -> Result<()> {
+fn cleanup_legacy_linux() {
     let _ = Command::new("systemctl")
-        .args(["--user", "disable", "--now", "usagemesh.timer"])
-        .output();
-    let _ = Command::new("systemctl")
-        .args(["--user", "disable", "--now", "usagemesh.service"])
+        .args(["--user", "disable", "--now", LEGACY_TIMER_NAME])
         .output();
     if let Ok(dir) = systemd_dir() {
-        let _ = fs::remove_file(dir.join("usagemesh.timer"));
-        let _ = fs::remove_file(dir.join("usagemesh.service"));
+        let _ = fs::remove_file(dir.join(LEGACY_TIMER_NAME));
+        let _ = fs::remove_file(dir.join(LEGACY_SERVICE_NAME));
+        let _ = Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
     }
-    let existing = Command::new("crontab")
-        .arg("-l")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
-        .unwrap_or_default();
-    if !existing.is_empty() {
-        let cleaned = existing
-            .lines()
-            .filter(|line| {
-                !line.contains("# usagemesh-resident-agent")
-                    && !line.contains("# usagemesh-usage-sync")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        if let Ok(mut child) = Command::new("crontab")
-            .arg("-")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            use std::io::Write;
-            if let Some(stdin) = child.stdin.as_mut() {
-                let _ = stdin.write_all(format!("{cleaned}\n").as_bytes());
-            }
-            let _ = child.wait();
-        }
+    let _ = rewrite_crontab(true, None);
+}
+
+#[cfg(target_os = "linux")]
+fn uninstall_linux() -> Result<()> {
+    for unit in [LEGACY_TIMER_NAME, LEGACY_SERVICE_NAME, RESIDENT_SERVICE_NAME] {
+        let _ = Command::new("systemctl")
+            .args(["--user", "disable", "--now", unit])
+            .output();
     }
+    if let Ok(dir) = systemd_dir() {
+        let _ = fs::remove_file(dir.join(LEGACY_TIMER_NAME));
+        let _ = fs::remove_file(dir.join(LEGACY_SERVICE_NAME));
+        let _ = fs::remove_file(dir.join(RESIDENT_SERVICE_NAME));
+        let _ = Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
+    }
+    let _ = rewrite_crontab(true, None);
     if let Ok(path) = unix_runner_path() {
         let _ = fs::remove_file(path);
     }
@@ -570,5 +660,17 @@ mod tests {
     #[test]
     fn resident_scheduler_revision_is_newer_than_tick_scheduler() {
         assert!(revision() >= 5);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resident_task_does_not_replace_the_running_legacy_task_in_place() {
+        assert_ne!(RESIDENT_TASK_NAME, LEGACY_TASK_NAME);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resident_service_does_not_replace_the_running_legacy_service_in_place() {
+        assert_ne!(RESIDENT_SERVICE_NAME, LEGACY_SERVICE_NAME);
     }
 }
