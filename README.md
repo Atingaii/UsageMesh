@@ -73,7 +73,7 @@ irm https://raw.githubusercontent.com/Atingaii/UsageMesh/main/install.ps1 | iex
 usagemesh setup
 ```
 
-`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first full scan, and installs the native scheduler at a **30-second cadence** unless you pass `--no-schedule`. New dashboard passwords must be at least 12 characters/bytes; existing workspaces keep their existing password unchanged across upgrades.
+`setup` uses the GitHub credential to identify the current account, finds that account's `UsageMesh` fork, asks for a dashboard password, performs the first **full** scan, and installs an OS-supervised **resident sync agent** unless you pass `--no-schedule`. The resident agent scans incrementally every 30 seconds after that first baseline; a version, ledger-schema or pricing-policy migration may deliberately rebuild the full local history once. New dashboard passwords must be at least 12 characters/bytes; existing workspaces keep their existing password unchanged across upgrades.
 
 A full sync also synchronizes the fork's `main` branch with the current `Atingaii/UsageMesh` upstream before publishing usage data. This is the automatic repair path for users who forked an older version: they do not need to click GitHub's **Sync fork** button manually.
 
@@ -89,13 +89,21 @@ The URL is derived from the actual fork. For example, if the GitHub account is `
 
 ## Zero-touch updates
 
-Starting with **UsageMesh v2.0.2**, normal synchronization is also the update mechanism. Every scheduler-created `usagemesh sync` can discover the latest **stable** GitHub Release. If a newer version exists, UsageMesh downloads the platform-specific release archive and its SHA-256 checksum, verifies it, synchronizes the workspace fork with the current upstream, replaces the CLI in place, and resumes synchronization automatically.
+Starting with **UsageMesh v2.0.2**, normal synchronization is also the update mechanism. Each resident-agent synchronization pass can discover the latest **stable** GitHub Release. If a newer version exists, UsageMesh downloads the platform-specific release archive and its SHA-256 checksum, verifies it, synchronizes the workspace fork with the current upstream, replaces the CLI in place, and resumes synchronization automatically. The next pass sees the new app version and performs one full migration scan before returning to incremental operation.
 
-Upgrades do **not** recreate the workspace or reset credentials. The repository, workspace key, dashboard password, device identity and GitHub credential remain unchanged. Current scheduled installations use the product's standard **30-second near-real-time cadence**; devices intentionally configured with `--no-schedule` remain manual.
+Upgrades do **not** recreate the workspace or reset credentials. The repository, workspace key, dashboard password, device identity and GitHub credential remain unchanged. Starting with **v2.5.0**, normal installations use a single OS-supervised resident process with a **30-second incremental loop** instead of launching a new one-shot sync process every 30 seconds; devices intentionally configured with `--no-schedule` remain manual.
 
 Stable releases are only promoted to `latest` after the supported platform builds and installer smoke tests pass. Failed candidates remain prereleases and are therefore ignored by automatic updates.
 
 Automatic updates can be disabled for controlled environments with `USAGEMESH_AUTO_UPDATE=0`. Re-running the original installer remains a recovery option; on an already configured machine the installer detects the workspace and performs the full refresh automatically, without requiring a second command.
+
+## Resident synchronization and presence
+
+Starting with **v2.5.0**, UsageMesh keeps one lightweight synchronization loop resident under the native OS supervisor: macOS uses `launchd` with `RunAtLoad` + `KeepAlive`; Linux prefers a `systemd --user` service with `Restart=always` and attempts to enable user lingering, with a cron watchdog fallback; Windows starts a hidden resident PowerShell loop through Task Scheduler at sign-in. Each loop waits for the current scan to finish before sleeping 30 seconds, so routine synchronization no longer creates overlapping timer ticks.
+
+The first local scan is full. Normal subsequent scans are incremental and intentionally re-read only a short two-day overlap window so sessions that are still being appended can be reconciled safely. Full rescans are reserved for explicit `sync --full` and migrations such as a new UsageMesh version, ledger schema or pricing policy.
+
+Device presence is separate from usage freshness. A small per-device `um-presence-*` branch receives a heartbeat about once per minute, while the larger encrypted `um-ledger-*` snapshot is replaced only when accounting changes or a migration requires refreshed metadata. The dashboard uses presence heartbeats for **Online / Heartbeat delayed / Offline** status and keeps the “last sync” timestamp tied to the usage ledger.
 
 ## Dashboard freshness
 
@@ -148,7 +156,7 @@ Dashboard assets use relative URLs, so a renamed fork does not depend on a hard-
 
 ## What is uploaded
 
-Each device publishes an encrypted snapshot to an isolated `um-ledger-*` branch. A small `um-index` branch lists device snapshot branch names. Dashboard password material is a password-wrapped workspace key on `um-dashboard`.
+Each device publishes an encrypted snapshot to an isolated `um-ledger-*` branch and a tiny liveness heartbeat to a matching `um-presence-*` branch. A small `um-index` branch lists device snapshot branch names. Presence contains only the hashed device identifier, heartbeat time and app version; usage rows and request metadata remain encrypted in the ledger. Dashboard password material is a password-wrapped workspace key on `um-dashboard`.
 
 UsageMesh is not designed to upload raw prompts, responses, reasoning text, source code, project content, full session transcripts, API keys or GitHub credentials. Request-level metadata is inside the encrypted ledger.
 
