@@ -51,7 +51,7 @@ enum CommandKind {
         /// Dashboard password. Prefer the hidden prompt or USAGEMESH_DASHBOARD_PASSWORD over CLI history.
         #[arg(long)]
         dashboard_password: Option<String>,
-        /// Configure without installing the native OS timer.
+        /// Configure without installing the native OS resident sync agent.
         #[arg(long)]
         no_schedule: bool,
     },
@@ -87,7 +87,7 @@ enum CommandKind {
     Invite,
     /// Print only the stable dashboard URL.
     Dashboard,
-    /// Remove the native timer; optionally remove the remote snapshot and local data.
+    /// Remove the native resident agent; optionally remove remote snapshot and local data.
     Uninstall {
         #[arg(long)]
         remove_remote: bool,
@@ -189,6 +189,7 @@ impl Drop for SyncLock {
 
 const SYNC_LOCK_WAIT_TIMEOUT: StdDuration = StdDuration::from_secs(10 * 60);
 const SYNC_LOCK_RETRY_INTERVAL: StdDuration = StdDuration::from_millis(250);
+const PRESENCE_INTERVAL: StdDuration = StdDuration::from_secs(60);
 
 fn acquire_sync_lock_at(path: PathBuf, wait: bool, quiet: bool) -> Result<Option<SyncLock>> {
     if let Some(parent) = path.parent() {
@@ -231,12 +232,47 @@ fn acquire_sync_lock(wait: bool, quiet: bool) -> Result<Option<SyncLock>> {
     acquire_sync_lock_at(config::config_dir()?.join("sync.lock"), wait, quiet)
 }
 
+fn presence_stamp_path() -> Result<PathBuf> {
+    Ok(config::config_dir()?.join("presence.stamp"))
+}
+
+fn presence_is_due() -> bool {
+    let Ok(path) = presence_stamp_path() else {
+        return true;
+    };
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .map(|age| age >= PRESENCE_INTERVAL)
+        .unwrap_or(true)
+}
+
+fn publish_presence_if_due(github: &GithubClient, config: &Config, quiet: bool) {
+    if !presence_is_due() {
+        return;
+    }
+    match github.replace_presence(&config.device_id, env!("CARGO_PKG_VERSION")) {
+        Ok(_) => {
+            if let Ok(path) = presence_stamp_path() {
+                let _ = fs::write(path, chrono::Utc::now().to_rfc3339());
+            }
+        }
+        Err(error) => {
+            if !quiet {
+                eprintln!("Presence heartbeat skipped: {error:#}");
+            }
+        }
+    }
+}
+
 fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let config = config::load()?;
 
-    // Every normal scheduler run doubles as a lightweight update check. Stable
-    // releases are checksum-verified and installed in place, so users configure
-    // UsageMesh once and keep their existing sync cadence across upgrades.
+    // Every normal resident-agent iteration doubles as a lightweight update check.
+    // Stable releases are checksum-verified and installed in place. The wrapper
+    // invokes the executable by path each iteration, so an updated binary is used
+    // automatically on the next pass without leaving a stale in-memory daemon.
     match update::maybe_auto_update(&config, full, quiet) {
         Ok(update::AutoUpdateOutcome::Restarted) => return Ok(()),
         Ok(update::AutoUpdateOutcome::Current) => {}
@@ -247,10 +283,11 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         }
     }
 
-    // v2.1 standardizes near-real-time synchronization at 30 seconds. Existing
-    // native schedulers are migrated once. --no-schedule devices remain manual.
+    // v2.5 migrates old periodic timers to a single resident OS-supervised loop.
+    // --no-schedule devices remain manual.
     let mut config = config;
     let mut save_config = false;
+    let mut cleanup_legacy_scheduler = false;
     if config.interval_seconds != scheduler::SYNC_INTERVAL_SECONDS {
         config.interval_seconds = scheduler::SYNC_INTERVAL_SECONDS;
         save_config = true;
@@ -260,30 +297,39 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
             Ok(description) => {
                 config.scheduler_revision = scheduler::revision();
                 save_config = true;
+                cleanup_legacy_scheduler = true;
                 if !quiet {
-                    println!("Automatic sync cadence migrated: {description}");
+                    println!("Automatic sync agent migrated: {description}");
                 }
             }
             Err(error) => {
                 if !quiet {
-                    eprintln!("Could not migrate the existing scheduler to 30 seconds: {error:#}");
+                    eprintln!("Could not migrate the existing scheduler to the resident agent: {error:#}");
                 }
             }
         }
     }
     if save_config {
-        config::save(&config).context("failed to persist the 30-second sync cadence")?;
+        config::save(&config).context("failed to persist the resident sync configuration")?;
+    }
+    if cleanup_legacy_scheduler {
+        // The new resident supervisor has a distinct native job/unit name. Retire
+        // the legacy periodic scheduler only after revision 5 is durable, so an
+        // upgrade never unloads the job that launched it before the replacement
+        // is ready. On platforms where cleanup terminates this legacy invocation,
+        // the resident agent immediately continues the migration scan.
+        scheduler::cleanup_legacy();
     }
 
-    // Interactive syncs wait instead of telling users to stop a daemon that does
-    // not exist. A restarted updater also waits, including when its originating
-    // scheduled tick was quiet; ordinary overlapping scheduler ticks still skip.
+    // Interactive syncs may overlap the resident wrapper's current child. Wait
+    // for that child instead of racing it; ordinary quiet iterations remain
+    // non-blocking so a second supervisor can never pile up scan processes.
     let wait_for_lock = !quiet || std::env::var_os("USAGEMESH_UPDATE_RESUME").is_some();
     let _sync_lock = match acquire_sync_lock(wait_for_lock, quiet)? {
         Some(lock) => lock,
         None => {
             if !quiet {
-                println!("Another UsageMesh sync did not finish within 10 minutes; the native scheduler will retry automatically.");
+                println!("Another UsageMesh sync did not finish within 10 minutes; the resident agent will retry automatically.");
             }
             return Ok(());
         }
@@ -291,21 +337,39 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
 
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
+    let initial_scan = previous.is_none();
     let pricing_migration = previous
         .as_ref()
         .is_some_and(|ledger| ledger.pricing.policy != pricing::PRICING_POLICY);
-    let effective_full = full || previous.is_none() || pricing_migration;
+    let schema_migration = previous.as_ref().is_some_and(|ledger| {
+        ledger.schema_version != model::CURRENT_LEDGER_SCHEMA_VERSION
+    });
+    let version_migration = previous.as_ref().is_some_and(|ledger| {
+        ledger.device.app_version != env!("CARGO_PKG_VERSION")
+    });
+    let effective_full = full
+        || initial_scan
+        || pricing_migration
+        || schema_migration
+        || version_migration;
 
     let (ledger, mode) = if effective_full {
-        (
-            collector::collect(device_info(&config), None)?,
-            if pricing_migration {
-                "full/pricing-migration"
-            } else {
-                "full"
-            },
-        )
+        let mode = if initial_scan {
+            "full/initial"
+        } else if version_migration {
+            "full/version-migration"
+        } else if schema_migration {
+            "full/schema-migration"
+        } else if pricing_migration {
+            "full/pricing-migration"
+        } else {
+            "full/manual"
+        };
+        (collector::collect(device_info(&config), None)?, mode)
     } else {
+        // Incremental scans intentionally re-read a short overlap window so
+        // sessions that are still being appended can be reconciled safely. They
+        // never rescan the complete local history during steady-state operation.
         let since = (Local::now().date_naive() - Duration::days(2))
             .format("%Y-%m-%d")
             .to_string();
@@ -329,10 +393,11 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
             );
         }
     }
-    if previous_for_compare
+
+    let accounting_unchanged = previous_for_compare
         .as_ref()
-        .is_some_and(|previous| collector::same_accounting(previous, &ledger))
-    {
+        .is_some_and(|previous| collector::same_accounting(previous, &ledger));
+    if accounting_unchanged && !version_migration && !schema_migration && !pricing_migration {
         // A manual full sync is also the migration/repair path for the static
         // dashboard index. Refresh it even when accounting itself is unchanged.
         if full {
@@ -340,9 +405,10 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
                 .refresh_dashboard_index()
                 .context("failed to refresh the dashboard device index")?;
         }
+        publish_presence_if_due(&github, &config, quiet);
         if !quiet {
             println!(
-                "No usage changes on {}; GitHub snapshot unchanged.",
+                "No usage changes on {}; GitHub usage snapshot unchanged.",
                 config.device_name
             );
             println!("  Scan: {} ms", ledger.scan_ms);
@@ -355,6 +421,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     github
         .refresh_dashboard_index()
         .context("failed to refresh the dashboard device index")?;
+    publish_presence_if_due(&github, &config, quiet);
     if !quiet {
         println!("Synced {} ({mode})", config.device_name);
         println!("  Branch: {branch}");
@@ -366,6 +433,12 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         );
         if pricing_migration {
             println!("  Pricing migration: rebuilt full local history with the current policy");
+        }
+        if schema_migration {
+            println!("  Schema migration: rebuilt full local history with the current ledger schema");
+        }
+        if version_migration {
+            println!("  Version migration: rebuilt full local history after the UsageMesh update");
         }
         println!("  Pricing: {}", ledger.pricing.source);
         println!("  Scan: {} ms", ledger.scan_ms);
@@ -385,7 +458,7 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
                 let _ = config::save(&persisted);
             }
             Err(error) => {
-                eprintln!("Automatic timer could not be installed: {error}");
+                eprintln!("Automatic resident agent could not be installed: {error}");
                 eprintln!("You can still run `usagemesh sync` manually.");
             }
         }
@@ -398,7 +471,11 @@ fn finish_onboarding(config: &Config, no_schedule: bool) -> Result<()> {
     println!("Add another device with this single command:");
     println!("usagemesh join '{}'", config::join_code(config)?);
     println!();
-    println!("No UsageMesh process stays resident between scheduled syncs.");
+    if no_schedule {
+        println!("Resident sync agent: disabled (--no-schedule).");
+    } else {
+        println!("Resident sync agent: enabled; the OS supervises a 30-second incremental loop.");
+    }
     Ok(())
 }
 
@@ -472,7 +549,19 @@ fn status() -> Result<()> {
         "Snapshot branch: {}",
         GithubClient::snapshot_branch(&config.device_id)
     );
+    println!(
+        "Presence branch: {}",
+        GithubClient::presence_branch(&config.device_id)
+    );
     println!("Sync interval: {} seconds", config.interval_seconds);
+    println!(
+        "Resident agent: {}",
+        if scheduler::is_installed() {
+            "installed"
+        } else {
+            "not installed"
+        }
+    );
     if let Some(ledger) = config::read_cached_ledger()? {
         println!("Last scan: {}", ledger.generated_at);
         println!("Tokens: {}", ledger.totals.total_tokens());
@@ -597,5 +686,10 @@ mod tests {
         assert!(second.is_some());
         drop(second);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn presence_interval_is_longer_than_scan_interval() {
+        assert!(PRESENCE_INTERVAL > StdDuration::from_secs(scheduler::SYNC_INTERVAL_SECONDS as u64));
     }
 }

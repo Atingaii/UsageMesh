@@ -16,6 +16,7 @@ pub const UPSTREAM_REPO: &str = "Atingaii/UsageMesh";
 pub const DASHBOARD_BRANCH: &str = "um-dashboard";
 pub const DEVICE_INDEX_BRANCH: &str = "um-index";
 const LEDGER_BRANCH_PREFIX: &str = "um-ledger-";
+pub const PRESENCE_BRANCH_PREFIX: &str = "um-presence-";
 
 pub struct GithubClient {
     http: Client,
@@ -64,6 +65,16 @@ struct DashboardDeviceIndex {
     kind: String,
     branches: Vec<String>,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DevicePresence {
+    schema_version: u32,
+    kind: String,
+    device_hash: String,
+    updated_at: String,
+    app_version: String,
 }
 
 fn http_client() -> Result<Client> {
@@ -226,6 +237,10 @@ impl GithubClient {
         format!("{LEDGER_BRANCH_PREFIX}{}", device_hash(device_id))
     }
 
+    pub fn presence_branch(device_id: &str) -> String {
+        format!("{PRESENCE_BRANCH_PREFIX}{}", device_hash(device_id))
+    }
+
     fn replace_root_snapshot(
         &self,
         branch: &str,
@@ -298,6 +313,21 @@ impl GithubClient {
         Ok(())
     }
 
+    fn delete_branch_if_present(&self, branch: &str) -> Result<()> {
+        let response = self
+            .request(
+                reqwest::Method::DELETE,
+                format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo),
+            )
+            .send()
+            .context("failed to contact GitHub")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        checked(response, "snapshot branch deletion")?;
+        Ok(())
+    }
+
     pub fn ledger_branches(&self) -> Result<Vec<String>> {
         let refs: Vec<MatchingRefResponse> = checked(
             self.request(
@@ -345,6 +375,29 @@ impl GithubClient {
         Ok(branch)
     }
 
+    /// Publish a tiny liveness record independently from the encrypted usage
+    /// ledger. This lets the static dashboard distinguish "agent is alive" from
+    /// "usage data changed" without rewriting a potentially large ledger every
+    /// heartbeat.
+    pub fn replace_presence(&self, device_id: &str, app_version: &str) -> Result<String> {
+        let hash = device_hash(device_id);
+        let branch = Self::presence_branch(device_id);
+        let presence = DevicePresence {
+            schema_version: 1,
+            kind: "usagemesh-device-presence".to_string(),
+            device_hash: hash.clone(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            app_version: app_version.to_string(),
+        };
+        self.replace_root_snapshot(
+            &branch,
+            "presence.json",
+            serde_json::to_string(&presence)?,
+            format!("usagemesh presence {hash}"),
+        )?;
+        Ok(branch)
+    }
+
     pub fn replace_dashboard_access(&self, envelope: &DashboardAccessEnvelope) -> Result<String> {
         self.replace_root_snapshot(
             DASHBOARD_BRANCH,
@@ -356,18 +409,8 @@ impl GithubClient {
     }
 
     pub fn remove_snapshot_branch(&self, device_id: &str) -> Result<()> {
-        let branch = Self::snapshot_branch(device_id);
-        let response = self
-            .request(
-                reqwest::Method::DELETE,
-                format!("{API}/repos/{}/git/refs/heads/{branch}", self.repo),
-            )
-            .send()
-            .context("failed to contact GitHub")?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(());
-        }
-        checked(response, "snapshot branch deletion")?;
+        self.delete_branch_if_present(&Self::snapshot_branch(device_id))?;
+        self.delete_branch_if_present(&Self::presence_branch(device_id))?;
         self.refresh_dashboard_index()?;
         Ok(())
     }
@@ -396,6 +439,19 @@ mod tests {
         assert_eq!(DEVICE_INDEX_BRANCH, "um-index");
         assert_ne!(DASHBOARD_BRANCH, GithubClient::snapshot_branch("device"));
         assert_ne!(DEVICE_INDEX_BRANCH, GithubClient::snapshot_branch("device"));
+    }
+
+    #[test]
+    fn presence_branch_is_isolated_from_the_usage_ledger() {
+        let ledger = GithubClient::snapshot_branch("device");
+        let presence = GithubClient::presence_branch("device");
+        assert!(ledger.starts_with(LEDGER_BRANCH_PREFIX));
+        assert!(presence.starts_with(PRESENCE_BRANCH_PREFIX));
+        assert_ne!(ledger, presence);
+        assert_eq!(
+            ledger.trim_start_matches(LEDGER_BRANCH_PREFIX),
+            presence.trim_start_matches(PRESENCE_BRANCH_PREFIX)
+        );
     }
 
     #[test]

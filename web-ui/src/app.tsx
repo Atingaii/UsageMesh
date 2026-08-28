@@ -352,6 +352,7 @@ const RAW = 'https://raw.githubusercontent.com';
 const DEFAULT_REPO = 'Atingaii/UsageMesh';
 const ACCESS_BRANCH = 'um-dashboard';
 const DEVICE_INDEX_BRANCH = 'um-index';
+const PRESENCE_BRANCH_PREFIX = 'um-presence-';
 const ACCESS_AAD_PREFIX = 'usagemesh-dashboard-access-v1:';
 const LEDGER_AAD_PREFIX = 'usagemesh-ledger-v2:';
 interface AccessEnvelope {
@@ -374,6 +375,14 @@ interface LedgerEnvelope {
   algorithm: string;
   nonce: string;
   ciphertext: string;
+}
+
+interface DevicePresence {
+  schemaVersion: number;
+  kind: string;
+  deviceHash: string;
+  updatedAt: string;
+  appVersion?: string;
 }
 
 interface LedgerRow {
@@ -423,6 +432,7 @@ interface LedgerRequest {
 interface Ledger {
   schemaVersion?: number;
   generatedAt?: string;
+  presenceUpdatedAt?: string;
   device?: {
     id?: string;
     name?: string;
@@ -535,7 +545,20 @@ async function decryptLedger(repo: string, branch: string, encodedKey: string): 
       key,
       b64url(envelope.ciphertext),
     );
-    return JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+    const ledger = JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+    try {
+      const presence = await json<DevicePresence>(`${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${envelope.deviceHash}/presence.json`);
+      if (
+        presence.kind === 'usagemesh-device-presence' &&
+        presence.schemaVersion === 1 &&
+        presence.deviceHash === envelope.deviceHash
+      ) {
+        ledger.presenceUpdatedAt = String(presence.updatedAt || '');
+      }
+    } catch {
+      // Backward compatibility: pre-resident-agent devices have no presence branch.
+    }
+    return ledger;
   } catch {
     throw new Error(`设备账本解密失败 (${branch})`);
   }
@@ -671,7 +694,7 @@ function toRequestRecord(ledger: Ledger, row: LedgerRequest, index: number): Req
 }
 
 
-function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string } {
+function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform: string; arch: string; updatedAt: string; presenceAt: string } {
   const id = String(ledger.device?.id || ledger.device?.name || 'unknown-device');
   return {
     id,
@@ -679,6 +702,7 @@ function rawDeviceIdentity(ledger: Ledger): { id: string; name: string; platform
     platform: String(ledger.device?.platform || 'unknown'),
     arch: String(ledger.device?.arch || ''),
     updatedAt: String(ledger.generatedAt || ''),
+    presenceAt: String(ledger.presenceUpdatedAt || ''),
   };
 }
 
@@ -698,7 +722,7 @@ function deviceSyncStatus(updatedAt: string): DeviceInfo['status'] {
   const ts = Date.parse(updatedAt);
   if (!Number.isFinite(ts)) return 'offline';
   const age = Math.max(0, Date.now() - ts);
-  if (age <= 2 * 60_000) return 'online';
+  if (age <= 3 * 60_000) return 'online';
   if (age <= 10 * 60_000) return 'syncing';
   return 'offline';
 }
@@ -726,7 +750,7 @@ function buildDeviceRows(ledgers: Ledger[], records: UsageRecord[], labels: Map<
       cost: item.cost,
       requestsCount: item.requests,
       sharePercentage: item.tokens / total * 100,
-      status: deviceSyncStatus(identity.updatedAt),
+      status: deviceSyncStatus(identity.presenceAt || identity.updatedAt),
     };
   }).sort((a, b) => b.totalTokens - a.totalTokens || a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
 }
@@ -1146,7 +1170,7 @@ const BreakdownCards: React.FC<BreakdownCardsProps> = ({ records }) => {
 
 function deviceStatusBadge(status: DeviceInfo['status']) {
   if (status === 'online') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />在线</span>;
-  if (status === 'syncing') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />最近同步</span>;
+  if (status === 'syncing') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-amber-500" />心跳延迟</span>;
   if (status === 'error') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />异常</span>;
   return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-semibold text-[10px]"><span className="w-1.5 h-1.5 rounded-full bg-slate-400" />离线</span>;
 }
@@ -1320,7 +1344,7 @@ const UsageAnalysisView: React.FC<Props> = ({ isDarkMode, records, requests }) =
 
     <section className="overflow-hidden rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] shadow-2xs">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-color)] px-4 py-3.5">
-        <div><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-emerald-500"/><h3 className="text-sm font-semibold text-[var(--text-primary)]">实时请求明细</h3><span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"/>LIVE</span></div><p className="mt-0.5 text-xs text-[var(--text-muted)]">设备约每 30 秒采集并上传；页面每 10 秒检查新快照。仅展示用量元数据，不上传 Prompt、回复或源代码。</p></div>
+        <div><div className="flex items-center gap-2"><Clock className="h-4 w-4 text-emerald-500"/><h3 className="text-sm font-semibold text-[var(--text-primary)]">实时请求明细</h3><span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"/>LIVE</span></div><p className="mt-0.5 text-xs text-[var(--text-muted)]">设备约每 30 秒增量采集；用量变化时上传账本，状态心跳独立刷新。页面每 10 秒检查新快照。仅展示用量元数据，不上传 Prompt、回复或源代码。</p></div>
         <div className="relative"><input value={requestSearch} onChange={e=>setRequestSearch(e.target.value)} placeholder="搜索设备、模型、速率、思考强度..." className="w-64 rounded-lg border border-[var(--border-color)] bg-[var(--bg-main)] py-1.5 pl-8 pr-3 text-xs text-[var(--text-primary)] outline-none focus:border-[var(--accent-blue)]"/><Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[var(--text-muted)]"/></div>
       </div>
       <div className="max-h-[620px] overflow-auto"><table className="w-full min-w-[1500px] whitespace-nowrap text-left text-xs"><thead className="sticky top-0 z-10 border-b border-[var(--border-color)] bg-[var(--bg-main)] text-[10px] font-mono text-[var(--text-muted)]"><tr><th className="p-3">具体时间</th><th className="p-3">设备</th><th className="p-3">客户端</th><th className="p-3">模型</th><th className="p-3">路由</th><th className="p-3">速率</th><th className="p-3">思考强度</th><th className="p-3 text-right">输入</th><th className="p-3 text-right">Cache Read</th><th className="p-3 text-right">Cache Write</th><th className="p-3 text-right">输出</th><th className="p-3 text-right">Reasoning</th><th className="p-3 text-right">总 Tokens</th><th className="p-3 text-right">耗时</th><th className="p-3 text-right">费用</th></tr></thead><tbody className="divide-y divide-[var(--border-subtle)] font-mono">{liveRequests.map(r=><tr key={r.id} className="hover:bg-[var(--bg-card-hover)]"><td className="p-3 text-[var(--text-secondary)]">{requestTime(r.timestampMs)}</td><td className="p-3 font-medium text-[var(--text-primary)]">{r.device}</td><td className="p-3 text-[var(--text-primary)]">{r.tool}</td><td className="p-3 font-semibold text-[var(--accent-blue)]">{r.model}</td><td className="p-3 text-[var(--text-secondary)]">{r.routeProvider}</td><td className="p-3"><span className={`rounded px-1.5 py-0.5 text-[10px] ${/fast|priority/i.test(r.tier)?'bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold':'bg-[var(--bg-main)] text-[var(--text-secondary)] border border-[var(--border-color)]'}`}>{r.tier}</span></td><td className="p-3"><span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] text-purple-600 dark:text-purple-400">{r.reasoningEffort || '—'}</span></td><td className="p-3 text-right">{r.inputTokens.toLocaleString()}</td><td className="p-3 text-right text-indigo-500">{r.cacheReadTokens.toLocaleString()}</td><td className="p-3 text-right text-slate-500">{r.cacheWriteTokens.toLocaleString()}</td><td className="p-3 text-right text-amber-500">{r.outputTokens.toLocaleString()}</td><td className="p-3 text-right text-purple-500">{r.reasoningTokens.toLocaleString()}</td><td className="p-3 text-right font-bold text-[var(--text-primary)]">{r.totalTokens.toLocaleString()}</td><td className="p-3 text-right text-[var(--text-secondary)]">{durationText(r.durationMs)}</td><td className="p-3 text-right font-bold text-emerald-600">{r.costLowerBound?'≥':''}${r.cost.toFixed(4)}</td></tr>)}{!liveRequests.length&&<tr><td colSpan={15} className="py-12 text-center text-[var(--text-muted)]">暂无请求级明细。升级设备端到支持请求明细的版本后，新快照会自动出现。</td></tr>}</tbody></table></div>
