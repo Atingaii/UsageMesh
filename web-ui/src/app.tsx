@@ -1,3 +1,4 @@
+import { Guide } from "./views/Guide";
 import { PeriodComparison } from "./components/PeriodComparison";
 import { DataQuality } from "./components/DataQuality";
 import React, {
@@ -186,7 +187,9 @@ function App() {
       onAddDevice={() => setConnectOpen(true)}
     >
       <main id="main-content" className="main-content" tabIndex={-1}>
-        <div className="page-heading">
+        <div
+          className={`page-heading ${activeTab === "guide" ? "sr-only" : ""}`}
+        >
           <div>
             <div className="eyebrow">{current.eyebrow}</div>
             <div className="page-title">
@@ -317,9 +320,11 @@ function App() {
               </div>
             }
           >
+            {activeTab === "guide" && (
+              <Guide onBack={() => navigate("overview")} />
+            )}
             {activeTab === "overview" && (
               <div className="view-stack">
-                <PeriodComparison dataset={dataset} filters={filters} />
                 <Overview
                   records={records}
                   onNavigate={navigate}
@@ -327,6 +332,7 @@ function App() {
                   budget={preferences.monthlyBudget}
                   lowerBound={month.lowerBound}
                 />
+                <PeriodComparison dataset={dataset} filters={filters} />
                 <DataQuality
                   dataset={dataset}
                   onInspect={() => navigate("devices")}

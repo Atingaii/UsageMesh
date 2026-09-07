@@ -320,9 +320,13 @@ pub fn serve(port: u16, open: bool, home: Option<PathBuf>, data: Option<PathBuf>
             continue;
         }
         if request.method() == &Method::Get
-            && matches!(path.as_str(), "/" | "/app.js" | "/style.css")
+            && matches!(path.as_str(), "/" | "/app.js" | "/style.css" | "/icons.js")
         {
             let (body, kind) = match path.as_str() {
+                "/icons.js" => (
+                    include_bytes!("../../local-web/icons.js").as_slice(),
+                    "text/javascript; charset=utf-8",
+                ),
                 "/app.js" => (
                     include_bytes!("../../local-web/app.js").as_slice(),
                     "text/javascript; charset=utf-8",

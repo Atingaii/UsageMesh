@@ -1,3 +1,4 @@
+import { icons } from "./icons.js";
 const $ = (s, root = document) => root.querySelector(s);
 const esc = (v) =>
   String(v ?? "").replace(
@@ -38,6 +39,7 @@ const sections = {
   quality: ["渠道质量", "分开观察主动探测和真实请求。"],
   connectors: ["代理连接器", "连接已有代理，读取账号与模型目录。"],
   notifications: ["提醒设置", "在预算、额度与费用变化时提醒。"],
+  guide: ["使用指南", "了解本机工作台的功能与数据边界。"],
 };
 document.documentElement.dataset.theme = getSaved("um-local-theme") || "system";
 document.documentElement.classList.toggle(
@@ -125,11 +127,11 @@ function render() {
     )
       .map(
         ([id, [name]]) =>
-          `<button data-action="navigate" data-id="${id}" ${section === id ? 'aria-current="page"' : ""}>${name}</button>`,
+          `<button data-action="navigate" data-id="${id}" ${section === id ? 'aria-current="page"' : ""}>${icons[id] || ""}<span>${name}</span></button>`,
       )
       .join(
         "",
-      )}</nav><div class="sidebar-foot"><span class="live">仅本机访问</span><small>v${esc(state.version)} · ${esc(state.platform)}</small>${button("锁定页面", "lock")}</div></aside><main><header><div><p class="eyebrow">YOUR USAGE. YOUR WORKSPACE.</p><h1>${title}</h1><p>${subtitle}</p></div><div class="actions">${button("刷新数据", "refresh")}${button("扫描本机", "scan", "", 'class="primary"')}</div></header><div id="status" role="status" aria-live="polite"></div>${state.scanError ? `<p class="notice error">${esc(state.scanError)}</p>` : ""}<section id="content">${views[section]()}</section><footer><span>本地数据不会同步到云端面板 · ${state.activity?.updatedAt ? "上次扫描 " + date(state.activity.updatedAt) : "尚未扫描"}</span><div class="actions">${button("切换主题", "theme")}${button(document.documentElement.classList.contains("large") ? "标准字号" : "大字号", "font")}</div></footer></main><dialog id="dialog" aria-labelledby="dialog-title"></dialog>`;
+      )}</nav><div class="sidebar-foot"><span class="live">仅本机访问</span><small>v${esc(state.version)} · ${esc(state.platform)}</small>${button("锁定页面", "lock")}</div></aside><main><div class="local-toolbar"><label class="nav-search">${icons.search}<input id="nav-search" type="search" aria-label="搜索功能" placeholder="搜索功能"></label><div class="actions">${button("提醒", "navigate", "notifications")}${button("外观", "theme")}</div></div><header ${section === "guide" ? 'class="local-guide-header"' : ""}><div><p class="eyebrow">YOUR USAGE. YOUR WORKSPACE.</p><h1>${title}</h1><p>${subtitle}</p></div><div class="actions">${button("刷新数据", "refresh")}${button("扫描本机", "scan", "", 'class="primary"')}</div></header><div id="status" role="status" aria-live="polite"></div>${state.scanError ? `<p class="notice error">${esc(state.scanError)}</p>` : ""}<section id="content">${views[section]()}</section><footer><span>本地数据不会同步到云端面板 · ${state.activity?.updatedAt ? "上次扫描 " + date(state.activity.updatedAt) : "尚未扫描"}</span><div class="actions">${button("切换主题", "theme")}${button(document.documentElement.classList.contains("large") ? "标准字号" : "大字号", "font")}</div></footer></main><dialog id="dialog" aria-labelledby="dialog-title"></dialog>`;
 }
 const sessions = () => state.activity?.sessions || [];
 const projectName = (id) =>
@@ -141,23 +143,81 @@ function metrics(items) {
 }
 const views = {
   overview() {
-    let month = new Date().toLocaleDateString("sv-SE").slice(0, 7),
-      cost = Object.entries(state.activity?.daily || {})
-        .filter(([d]) => d.startsWith(month))
-        .reduce((s, [, v]) => s + v, 0);
-    return (
-      metrics([
-        ["本月估算费用", money(cost), "本机兼容价卡估算"],
+    const daily = state.activity?.daily || {};
+    const month = new Date().toLocaleDateString("sv-SE").slice(0, 7);
+    const cost = Object.entries(daily)
+      .filter(([d]) => d.startsWith(month))
+      .reduce((s, [, v]) => s + v, 0);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const day = new Date();
+      day.setDate(day.getDate() - 6 + i);
+      const key = day.toLocaleDateString("sv-SE");
+      return [key, Number(daily[key] || 0)];
+    });
+    const max = Math.max(...days.map(([, v]) => v), 0.01);
+    return `<div class="local-today"><section class="daily-chart"><h2>7 天费用趋势</h2><p class="small">本机兼容价卡估算 · 非实际账单</p>${state.activity?.updatedAt ? `<div class="daily-bars">${days.map(([d, v]) => `<div><span>${esc(d.slice(5))}</span><meter min="0" max="${max}" value="${v}" aria-label="${esc(d)} 估算费用 ${money(v)}"></meter><strong>${money(v)}</strong></div>`).join("")}</div>` : empty("尚未扫描本机", "点击扫描后查看最近 7 天的费用变化。")}</section>${metrics(
+      [
+        ["本月估算费用", money(cost), "本机记录"],
         [
           "项目",
           new Set(sessions().map((s) => s.projectId)).size,
-          "本机最近 90 天",
+          "最近 90 天",
         ],
         ["会话", num(sessions().length), "按来源会话 ID 汇总"],
-        ["渠道事件", num(state.events.length), "探测 + 手动导入"],
-      ]) +
-      `<div class="grid two"><article class="card"><p class="eyebrow">START HERE</p><h2>一个入口，管理本机 AI 工具</h2><p>扫描后查看项目账本；保存供应商方案后，先检查配置差异，再应用。额度连接器可独立使用。</p><div class="actions">${button("查看项目", "navigate", "projects")}${button("管理供应商", "navigate", "providers")}</div></article><article class="card"><h2>运行状态</h2><dl><dt>后台扫描</dt><dd>每 ${state.settings.preferences.scanMinutes} 分钟</dd><dt>系统通知</dt><dd>${state.settings.preferences.notifications ? "已启用" : "未启用"}</dd><dt>数据目录</dt><dd class="path">${esc(state.dataDir)}</dd></dl>${note("关闭浏览器后服务仍继续运行；终止终端中的 serve 进程后，扫描和提醒随之停止。")}</article></div>${note(state.activity?.note || "首次使用请点击“扫描本机”。只读取本机客户端用量记录，不读取对话正文到本地工作台。")}`
-    );
+        ["渠道事件", num(state.events.length), "探测与导入"],
+      ],
+    )}</div><h2 class="region-heading">近期概览</h2><div class="recent-grid"><article class="card"><h2>最近会话</h2>${
+      sessions()
+        .slice(0, 5)
+        .map(
+          (s) =>
+            `<div class="recent-row"><div><strong>${esc(projectName(s.projectId))}</strong><small>${esc(s.client)} · ${date(s.lastAt)}</small></div><span>${s.lowerBound ? "≥ " : ""}${money(s.cost)}</span></div>`,
+        )
+        .join("") || empty("暂无会话")
+    }${button("查看全部", "navigate", "projects")}</article><article class="card"><h2>供应商方案</h2>${
+      state.settings.providers
+        .slice(0, 5)
+        .map(
+          (p) =>
+            `<div class="recent-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.tool)} · ${esc(p.model)}</small></div></div>`,
+        )
+        .join("") || empty("尚未保存方案", "新增方案后可预览、应用和回滚。")
+    }${button("管理方案", "navigate", "providers")}</article><article class="card"><h2>运行状态</h2><dl><dt>自动扫描</dt><dd>每 ${state.settings.preferences.scanMinutes} 分钟</dd><dt>系统通知</dt><dd>${state.settings.preferences.notifications ? "已启用" : "未启用"}</dd><dt>数据目录</dt><dd class="path">${esc(state.dataDir)}</dd></dl>${note("关闭浏览器后服务仍运行；终止 serve 后，扫描和通知停止。")}${button("提醒设置", "navigate", "notifications")}</article></div>${note(state.activity?.note || "项目、配置与密钥保存在本机，不上传云端面板。")}`;
+  },
+  guide() {
+    const chapters = [
+      [
+        "start",
+        "快速开始",
+        "点击扫描本机读取最近 90 天的客户端用量。工作台不需要 GitHub 登录；云端面板继续负责跨设备加密汇总。",
+      ],
+      [
+        "quota",
+        "额度来源",
+        "Codex 额度来自本机日志中的供应商快照。可选 CodexBar 连接器需单独安装与授权。记录过期或窗口重置后，请重新读取，不要将历史比例当成当前余额。",
+      ],
+      [
+        "projects",
+        "项目与会话",
+        "可按项目搜索、设置别名和标签，并查看会话、请求及导出 CSV。费用为价卡估算，≥ 表示费用下界，未知字段不会填入推测值。",
+      ],
+      [
+        "providers",
+        "配置管理",
+        "先保存供应商方案，再预览修改内容。确认应用会创建本机备份；回滚遇到外部修改会拒绝覆盖。凭据填写环境变量名，Claude 应用时会把值写入其本机配置。",
+      ],
+      [
+        "connectors",
+        "渠道与代理",
+        "连接测试默认只读取模型目录，生成测试需要主动勾选。导入日志与探测分别统计。代理连接器仅读取账号元数据或模型目录。",
+      ],
+      [
+        "notifications",
+        "通知与隐私",
+        "预算、费用突增和额度阈值提醒仅在 serve 运行期间生效。关闭浏览器不会停止服务。配置备份可能包含原有凭据，仅保存在本机私有目录。",
+      ],
+    ];
+    return `<article class="guide-page"><h2>本地工作台使用指南</h2><p class="guide-meta">${chapters.length} 个章节 · UsageMesh ${esc(state.version)}</p><p class="guide-intro">从查看本机用量，到管理供应商配置，了解每项功能的操作方式与数据边界。</p><div class="guide-layout"><nav aria-label="指南目录"><strong>目录</strong>${chapters.map(([id, title], i) => `<a href="#chapter-${id}" data-action="chapter" data-id="${id}">${i + 1}. ${title}</a>`).join("")}</nav><div>${chapters.map(([id, title, body], i) => `<section id="chapter-${id}"><h3><span>${i + 1}</span>${title}</h3><div class="guide-copy"><p>${body}</p>${id === "start" ? "<pre>usagemesh serve</pre>" : ""}</div></section>`).join("")}</div></div></article>`;
   },
   quota() {
     return `<div class="card"><h2>连接额度来源</h2><p>Codex 本机额度快照随扫描更新。已安装并配置 CodexBar 时，可以手动读取以下额度；未授权时会显示具体错误。</p><div class="actions">${["codex", "claude", "gemini"].map((p) => button("读取 " + p, "quota", p)).join("")}</div>${note("额度来自源记录，不能从 Token 数推算订阅余额。读取 CodexBar 最多等待 25 秒。")}</div><div class="grid two">${
@@ -327,6 +387,15 @@ function csvCell(v) {
 }
 let preview;
 async function act(action, id) {
+  if (action === "chapter") {
+    document
+      .getElementById("chapter-" + id)
+      ?.scrollIntoView({ block: "start" });
+    document
+      .querySelectorAll(".guide-layout nav a")
+      .forEach((a) => a.classList.toggle("active", a.dataset.id === id));
+    return;
+  }
   if (action === "close") return $("#dialog").close();
   if (action === "home") ((action = "navigate"), (id = "overview"));
   if (action === "navigate") {
@@ -517,6 +586,12 @@ document.addEventListener("click", async (e) => {
   }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.id === "nav-search") {
+    const q = e.target.value.toLowerCase();
+    document
+      .querySelectorAll("aside nav button")
+      .forEach((b) => (b.hidden = !b.textContent.toLowerCase().includes(q)));
+  }
   if (e.target.id === "project-search")
     $("#projects-table").innerHTML = projectTable(e.target.value);
 });

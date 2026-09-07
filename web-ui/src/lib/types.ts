@@ -137,5 +137,6 @@ export type ActiveTab =
   | "analytics"
   | "devices"
   | "aggregated"
-  | "settings";
+  | "settings"
+  | "guide";
 export type SyncStatus = "synced" | "syncing" | "error" | "partial";

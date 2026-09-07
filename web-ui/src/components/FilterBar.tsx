@@ -81,7 +81,7 @@ export function FilterBar({
             onClick={() => setExpanded(!expanded)}
           >
             <SlidersHorizontal size={15} />
-            筛选
+            筛选与视图
             {selected.length ? (
               <span className="count">{selected.length}</span>
             ) : null}
@@ -97,18 +97,20 @@ export function FilterBar({
           </button>
         </div>
       </div>
-      <div className="filter-row">
-        {select("device")}
-        {select("tool")}
-        {select("model")}
-        <span className="filter-spacer" />
-        <SavedViews
-          key={repo}
-          repo={repo}
-          filters={filters}
-          onChange={onChange}
-        />
-      </div>
+      {expanded && (
+        <div className="filter-row">
+          {select("device")}
+          {select("tool")}
+          {select("model")}
+          <span className="filter-spacer" />
+          <SavedViews
+            key={repo}
+            repo={repo}
+            filters={filters}
+            onChange={onChange}
+          />
+        </div>
+      )}
       {expanded && (
         <div className="filter-row advanced-filters">
           {(

@@ -8,13 +8,15 @@
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono:
     "SFMono-Regular", "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
-  --bg-main: #f7f7f8;
+  --bg-main: #ffffff;
+  --chart-fill: #f5f8ff;
+  --overview-well: #f5f5f7;
   --bg-card: #fff;
   --bg-card-hover: #f4f4f5;
   --text-primary: #18181b;
   --text-secondary: #52525b;
   --text-muted: #62626d;
-  --border-color: #e4e4e7;
+  --border-color: #ececf0;
   --border-subtle: #eeeef0;
   --primary: #625df5;
   --primary-hover: #534ee3;
@@ -30,7 +32,9 @@
 }
 .dark {
   color-scheme: dark;
-  --bg-main: #09090b;
+  --bg-main: #141419;
+  --chart-fill: #1a2335;
+  --overview-well: #1c1c23;
   --bg-card: #111113;
   --bg-card-hover: #1b1b20;
   --text-primary: #fafafa;
@@ -3173,4 +3177,458 @@ svg {
   .saved-views {
     width: 100%;
   }
+}
+
+/* Credit-inspired workspace: open canvas, compact navigation and quiet panels. */
+.sidebar {
+  width: 224px;
+  padding: 0 14px;
+  border-right-color: var(--border-subtle);
+}
+.workspace-body {
+  margin-left: 224px;
+}
+.sidebar-brand {
+  min-height: 68px;
+}
+.workspace-label {
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  margin-bottom: 0;
+}
+.nav-section {
+  margin-top: 24px;
+  font-size: 0.75rem;
+}
+.nav-item {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-weight: 450;
+  margin-bottom: 3px;
+}
+.nav-item.active {
+  background: var(--accent);
+  font-weight: 550;
+}
+.sidebar-bottom {
+  padding-top: 24px;
+}
+.sidebar-signature {
+  letter-spacing: 0;
+  font-family: var(--font-sans);
+}
+.topbar {
+  height: 68px;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 28px;
+  border: 0;
+  background: transparent;
+}
+.topbar-context {
+  display: block;
+  padding: 7px 13px;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  min-width: 180px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+.topbar-avatar {
+  display: none;
+}
+.main-content {
+  max-width: 1240px;
+  padding: 24px 28px 40px;
+}
+.page-heading {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 18px;
+  margin-bottom: 22px;
+}
+.page-heading .eyebrow {
+  display: none;
+}
+.page-title h1 {
+  font-size: 1.5rem;
+  letter-spacing: -0.5px;
+  font-weight: 600;
+}
+.page-heading p {
+  font-size: 0.875rem;
+}
+.panel,
+.kpi-card {
+  box-shadow: none;
+  border-radius: 11px;
+}
+.filters {
+  border-color: var(--border-subtle);
+  background: var(--bg-card);
+  border-radius: 8px;
+}
+.credit-today {
+  display: grid;
+  grid-template-columns: minmax(0, 2.15fr) minmax(245px, 1fr);
+  gap: 36px;
+  margin: 4px 0 12px;
+}
+.credit-today .trend-panel {
+  border: 0;
+  border-radius: 0;
+}
+.credit-today .panel-heading {
+  padding: 4px 0 18px;
+}
+.credit-today .panel-heading p,
+.credit-today .chart-footnote {
+  display: none;
+}
+.credit-today .chart-summary {
+  padding: 0;
+  font-size: 0.8125rem;
+}
+.credit-today .trend-chart {
+  height: 280px;
+  padding: 12px 0;
+}
+.credit-today .kpi-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.credit-today .kpi-card {
+  border: 0;
+  border-radius: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-color);
+  background: transparent;
+}
+.credit-today .kpi-card:last-child {
+  border-bottom: 0;
+}
+.credit-today .kpi-icon,
+.credit-today .kpi-tag {
+  display: none;
+}
+.credit-today .kpi-value {
+  font-size: 1.35rem;
+  letter-spacing: -0.4px;
+  margin-top: 3px;
+}
+.credit-today .kpi-note {
+  font-size: 0.75rem;
+  margin-top: 3px;
+}
+.credit-today .kpi-top {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.region-heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+  margin: 0;
+}
+.overview-rank-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  background: var(--overview-well);
+  border-radius: 13px;
+  margin-top: -14px;
+}
+.overview-rank-grid > .panel {
+  border-color: transparent;
+  min-height: 275px;
+}
+.overview-rank-grid .panel-heading {
+  padding: 17px 17px 13px;
+}
+.overview-rank-grid .panel-heading h2 {
+  font-size: 0.875rem;
+}
+.overview-rank-grid .ranking-list {
+  padding: 0 17px 18px;
+}
+.kpi-tag {
+  display: none;
+}
+.credit-activity {
+  padding: 0 12px;
+  display: grid;
+  gap: 5px;
+}
+.credit-activity > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-radius: 6px;
+  background: var(--bg-card-hover);
+  padding: 8px 10px;
+  font-size: 0.75rem;
+}
+.credit-activity strong {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.credit-activity small {
+  display: block;
+  color: var(--text-muted);
+}
+.credit-activity > div > span {
+  color: var(--primary);
+  white-space: nowrap;
+  font-size: 0.6875rem;
+}
+.credit-card-link {
+  margin: 14px 17px;
+  font-size: 0.8125rem;
+}
+.overview-rank-grid .token-total {
+  padding: 0 17px;
+}
+.overview-rank-grid .token-total .eyebrow {
+  display: none;
+}
+.overview-rank-grid .token-total strong {
+  font-size: 1.4rem;
+  margin: 0;
+}
+.overview-rank-grid .token-legend {
+  font-size: 0.8125rem;
+}
+.insight-strip {
+  background: var(--bg-card-hover);
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+.workspace-footer {
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px 28px;
+}
+.unlock-card {
+  box-shadow: none !important;
+  border-color: var(--border-color);
+}
+@media (max-width: 1100px) {
+  .overview-rank-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .credit-today {
+    gap: 20px;
+    grid-template-columns: minmax(0, 1.5fr) minmax(225px, 1fr);
+  }
+}
+@media (max-width: 800px) {
+  .workspace-body {
+    margin-left: 0;
+  }
+  .topbar {
+    padding: 0 18px;
+  }
+  .main-content {
+    padding: 18px;
+  }
+  .credit-today {
+    grid-template-columns: 1fr;
+  }
+  .credit-today .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .credit-today .kpi-card {
+    padding: 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+  }
+  .overview-rank-grid {
+    grid-template-columns: 1fr;
+  }
+  .credit-today .trend-chart {
+    height: 240px;
+  }
+  .topbar-context {
+    min-width: 0;
+  }
+  .workspace-footer {
+    padding: 20px 18px;
+  }
+}
+.guide-page {
+  max-width: 1100px;
+  margin: 8px auto 36px;
+}
+.guide-page > h2 {
+  font-size: 2.25rem;
+  font-weight: 650;
+  letter-spacing: -1px;
+  margin: 26px 0 18px;
+}
+.guide-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+.guide-meta > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  background: var(--bg-card-hover);
+  border-radius: 20px;
+}
+.guide-meta .button {
+  font-size: 0.8125rem;
+  min-height: 30px;
+}
+.guide-intro {
+  padding: 22px 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.9;
+  margin: 28px 0 40px;
+}
+.guide-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 56px;
+}
+.guide-layout nav {
+  position: sticky;
+  top: 28px;
+  align-self: start;
+  display: grid;
+  gap: 6px;
+  font-size: 0.875rem;
+}
+.guide-layout nav > strong {
+  font-size: 0.875rem;
+  font-weight: 550;
+  padding: 10px;
+}
+.guide-layout nav a {
+  color: var(--text-muted);
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+}
+.guide-layout nav a.active {
+  background: var(--accent);
+  color: var(--primary);
+}
+.guide-layout section {
+  scroll-margin-top: 28px;
+  margin: 0 0 56px;
+}
+.guide-layout h3 {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin-bottom: 22px;
+}
+.guide-layout h3 > span {
+  font-size: 0.875rem;
+  font-weight: 500;
+  min-width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--primary);
+  border-radius: 9px;
+}
+.guide-copy {
+  border-left: 1px solid var(--border-subtle);
+  margin-left: 15px;
+  padding: 0 0 0 34px;
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  line-height: 1.95;
+}
+.guide-callout {
+  background: var(--bg-card-hover);
+  border-radius: 9px;
+  padding: 20px;
+  margin-top: 22px;
+  font-size: 0.875rem;
+}
+@media (max-width: 800px) {
+  .guide-layout {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+  .guide-layout nav {
+    position: static;
+    display: flex;
+    overflow: auto;
+  }
+  .guide-layout nav a {
+    white-space: nowrap;
+  }
+  .guide-page > h2 {
+    font-size: 1.8rem;
+  }
+  .guide-copy {
+    padding-left: 20px;
+  }
+  .guide-meta {
+    flex-wrap: wrap;
+  }
+}
+
+.credit-today .kpi-note {
+  display: none;
+}
+.credit-today .kpi-card {
+  padding: 10px 0;
+}
+.credit-today .kpi-top {
+  line-height: 1.5;
+}
+.credit-today .kpi-value {
+  line-height: 1.4;
+}
+.credit-today .kpi-grid {
+  justify-content: flex-start;
+}
+.credit-today .trend-chart {
+  height: 245px;
+}
+.credit-today {
+  gap: 36px;
+}
+.filter-primary {
+  padding: 9px 12px;
+}
+.page-heading {
+  margin-bottom: 14px;
+}
+.scope-line {
+  padding: 9px 1px 12px;
+}
+.sidebar-brand .brand-caption {
+  display: none;
+}
+.sidebar-brand {
+  min-height: 62px;
+}
+.workspace-label {
+  margin-bottom: 4px;
 }

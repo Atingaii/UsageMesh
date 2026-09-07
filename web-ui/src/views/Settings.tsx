@@ -66,10 +66,7 @@ export function Settings({
             </p>
           </div>
         </Section>
-        <Section
-          title="界面外观"
-          subtitle="延续 GrowthOS 的简洁视觉，选择适合你的亮度"
-        >
+        <Section title="界面外观" subtitle="选择适合你的亮度与阅读字号">
           <div className="settings-body">
             <label className="setting-row">
               <span>

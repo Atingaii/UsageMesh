@@ -43,15 +43,15 @@ GitHub Pages 使用相对资源路径，支持 Fork 改名。分区导航使用 
 
 ## 设计基线
 
-对齐 GrowthOS-Go 的 `docs/frontend/frontend-ui-baseline.md` 和 `web/src/index.css`：
+v2.6.1 参考用户提供的 LINUX DO Credit 首页与使用指南截图，统一云端和本地页面：
 
 - white/zinc 中性色、`#625df5` 主色，暗色 `#7c74ff`；绿色/琥珀色/红色表达独立状态；
-- 本机 Inter / 系统中文字体与 SFMono 回退，无远程字体请求；
-- 细边框、约 10px 圆角、轻阴影和有节制的留白；
+- 系统 UI / 中文字体与本机 Inter、SFMono 回退，无远程字体请求；
+- 细边框、约 10px 圆角、白底与浅灰卡片分组，桌面内容最大宽度 1240px；
 - 解锁页面采用左侧叙述、右侧主任务卡；工作台采用共享侧边导航和内容区域；
 - 移动端使用原生 dialog 导航和弹窗，保留焦点边界与 Escape 退出；可见焦点、语义标签、文字状态、触控尺寸及 reduced-motion 同时参与可访问性。
 
-保留 UsageMesh 自有产品身份，不复制 GrowthOS 业务页面或权限模型。
+概览采用蓝色趋势图与右侧数字摘要，详细筛选和保存视图可展开。内置使用指南提供章节目录和 Markdown 复制。本地工作台增加功能搜索。保留 UsageMesh 自有产品身份、业务口径和访问边界。视觉复核见仓库根目录 `design-qa.md`。
 
 ## 模块边界
 

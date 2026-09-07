@@ -26,7 +26,7 @@ The dashboard also supports up to 20 named filter views per repository, complete
 
 ## Redesigned workspace
 
-The dashboard now follows the GrowthOS-Go neutral/violet design language, with light, dark and system themes and mobile navigation. Existing passwords, encrypted ledgers and device setup remain compatible.
+The cloud dashboard and local workspace now share a LINUX DO Credit-inspired white/neutral design: compact navigation, blue usage trends, violet selection states and clear typography. Light, dark and system themes, mobile navigation and built-in usage guides are included. Existing passwords, encrypted ledgers and device setup remain compatible.
 
 Saved filter views, real pagination, full filtered CSV exports, request details, device diagnostics, explicit partial/failure states, configurable refresh and local monthly cost reminders are included. Request history remains limited by device-side retention. See the [frontend development guide](docs/FRONTEND.md) for setup, module boundaries and verification.
 

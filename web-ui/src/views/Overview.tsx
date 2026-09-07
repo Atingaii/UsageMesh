@@ -137,12 +137,6 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
               data={data}
               margin={{ top: 12, right: 18, left: 4, bottom: 0 }}
             >
-              <defs>
-                <linearGradient id="usageFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#625df5" stopOpacity={0.2} />
-                  <stop offset="100%" stopColor="#625df5" stopOpacity={0.015} />
-                </linearGradient>
-              </defs>
               <CartesianGrid
                 stroke="var(--border-subtle)"
                 vertical={false}
@@ -184,9 +178,9 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
               <Area
                 type="monotone"
                 dataKey={metric}
-                stroke="var(--primary)"
-                strokeWidth={2.5}
-                fill="url(#usageFill)"
+                stroke="#538bff"
+                strokeWidth={2}
+                fill="var(--chart-fill)"
                 dot={data.length === 1 ? { r: 4 } : false}
                 activeDot={{ r: 5, strokeWidth: 3, stroke: "var(--bg-card)" }}
                 isAnimationActive={false}
@@ -279,6 +273,17 @@ export function Overview({
   lowerBound: boolean;
 }) {
   const values = useMemo(() => totals(records), [records]);
+  const recentRecords = useMemo(
+    () =>
+      [...records]
+        .sort(
+          (a, b) =>
+            (b.timestampMs ?? Date.parse(b.date)) -
+            (a.timestampMs ?? Date.parse(a.date)),
+        )
+        .slice(0, 5),
+    [records],
+  );
   const tokenTypes = [
     ["新增输入", values.inputTokens],
     ["缓存读取", values.cacheReadTokens],
@@ -288,9 +293,34 @@ export function Overview({
   ] as const;
   return (
     <div className="view-stack">
-      <KpiCards records={records} />
-      <div className="overview-main-grid">
+      <div className="credit-today">
         <TrendChart records={records} />
+        <KpiCards records={records} />
+      </div>
+      <h2 className="region-heading">近期概览</h2>
+      <div className="overview-rank-grid">
+        <Section title="近期活动" subtitle="当前筛选范围内最近的聚合记录">
+          <div className="credit-activity">
+            {recentRecords.map((row) => (
+              <div key={row.id}>
+                <div>
+                  <strong>{row.model}</strong>
+                  <small>
+                    {row.device} · {row.date}
+                  </small>
+                </div>
+                <span>{compact(row.totalTokens)} Tokens</span>
+              </div>
+            ))}
+            {!records.length && <EmptyState />}
+          </div>
+          <button
+            className="text-button credit-card-link"
+            onClick={() => onNavigate("aggregated")}
+          >
+            查看全部 <ArrowRight size={14} />
+          </button>
+        </Section>
         <Section
           title="Token 构成"
           subtitle="看清用量的每一部分"
@@ -345,8 +375,6 @@ export function Overview({
             <ArrowRight size={14} />
           </button>
         </Section>
-      </div>
-      <div className="overview-rank-grid">
         <Ranking
           records={records}
           dimension="model"

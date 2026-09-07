@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   BookOpen,
   ChartNoAxesCombined,
-  ChevronRight,
   CircleHelp,
   Database,
   Github,
@@ -60,6 +59,14 @@ export const NAV = [
     icon: Settings2,
     eyebrow: "WORKSPACE SETTINGS",
     description: "按你的工作方式，调整外观、刷新与费用提醒。",
+  },
+  {
+    id: "guide",
+    label: "使用指南",
+    icon: BookOpen,
+    section: "文档",
+    eyebrow: "GUIDE",
+    description: "了解工作区的功能、数据来源与使用方式。",
   },
 ] as const;
 
@@ -161,30 +168,17 @@ export function WorkspaceShell(props: Props) {
         ))}
       </nav>
       <div className="sidebar-bottom">
-        {!small && (
-          <div className="connect-card">
-            <span className="icon-tile">
-              <Monitor size={19} />
-            </span>
-            <strong>让用量不再分散</strong>
-            <p>
-              连接你的其他设备，
-              <br />
-              在这里查看完整用量。
-            </p>
-            <button
-              className="button"
-              onClick={() => {
-                onMobile(false);
-                onAddDevice();
-              }}
-            >
-              <Plus size={15} />
-              接入新设备
-              <ArrowUpRight size={14} />
-            </button>
-          </div>
-        )}
+        <button
+          className="nav-item"
+          onClick={() => {
+            onMobile(false);
+            onAddDevice();
+          }}
+          title="接入新设备"
+        >
+          <Plus size={18} />
+          {!small && <span>接入新设备</span>}
+        </button>
         <a
           className="nav-item"
           href="https://github.com/Atingaii/UsageMesh/blob/main/README.zh-CN.md"
@@ -261,9 +255,7 @@ export function WorkspaceShell(props: Props) {
             >
               <Menu size={20} />
             </button>
-            <span className="desktop-only">个人工作区</span>
-            <ChevronRight size={14} className="desktop-only" />
-            <strong>{current.label}</strong>
+            <span className="topbar-context">{current.label}</span>
           </div>
           <div className="topbar-actions">
             <span
