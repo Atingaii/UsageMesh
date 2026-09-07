@@ -36,6 +36,7 @@ export function UnlockScreen({
     const password = String(new FormData(form).get("password") || "");
     if (!password) return;
     form.reset();
+    setVisible(false);
     setBusy(true);
     try {
       await onUnlock(password);
@@ -116,7 +117,12 @@ export function UnlockScreen({
             <Github size={16} />
             <span>{repoFromLocation()}</span>
           </div>
-          <form onSubmit={submit} aria-label="解锁工作区">
+          <form
+            className="auth-form"
+            onSubmit={submit}
+            aria-label="解锁工作区"
+            aria-busy={busy}
+          >
             <input
               type="text"
               name="username"
@@ -125,30 +131,42 @@ export function UnlockScreen({
               readOnly
               hidden
             />
-            <label htmlFor="password">工作区密码</label>
-            <div className="password-input">
-              <KeyRound size={17} />
-              <input
-                id="password"
-                name="password"
-                type={visible ? "text" : "password"}
-                autoComplete="current-password"
-                placeholder="输入 Dashboard 密码"
-                required
-                disabled={busy}
-              />
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={visible ? "隐藏密码" : "显示密码"}
-                aria-pressed={visible}
-                onClick={() => setVisible(!visible)}
-              >
-                {visible ? <EyeOff size={17} /> : <Eye size={17} />}
-              </button>
+            <div className="auth-field">
+              <label htmlFor="password">工作区密码</label>
+              <div className={`password-input ${error ? "is-invalid" : ""}`}>
+                <KeyRound size={17} />
+                <input
+                  id="password"
+                  name="password"
+                  type={visible ? "text" : "password"}
+                  autoComplete="current-password"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={
+                    error
+                      ? "unlock-error"
+                      : notice
+                        ? "unlock-notice"
+                        : undefined
+                  }
+                  placeholder="输入 Dashboard 密码"
+                  required
+                  disabled={busy}
+                />
+                <button
+                  type="button"
+                  className="icon-button"
+                  aria-label={visible ? "隐藏密码" : "显示密码"}
+                  aria-pressed={visible}
+                  disabled={busy}
+                  onClick={() => setVisible(!visible)}
+                >
+                  {visible ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
             </div>
             {error && (
               <div
+                id="unlock-error"
                 ref={alert}
                 role="alert"
                 tabIndex={-1}
@@ -157,8 +175,12 @@ export function UnlockScreen({
                 {error}
               </div>
             )}
-            {notice && (
-              <p role="status" className="muted small">
+            {!error && notice && (
+              <p
+                id="unlock-notice"
+                role="status"
+                className="auth-notice muted small"
+              >
                 {notice}
               </p>
             )}

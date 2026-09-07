@@ -121,6 +121,17 @@ input::placeholder {
   color: var(--text-muted);
   opacity: 0.85;
 }
+/* Keep browser autofill legible within compound fields in both themes. */
+input:autofill {
+  box-shadow: 0 0 0 1000px var(--bg-card) inset;
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+}
+input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset;
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
+}
 :focus-visible {
   outline: 3px solid var(--primary);
   outline-offset: 3px;
@@ -2049,47 +2060,77 @@ svg {
 .repo-label span {
   min-width: 0;
 }
-.auth-card form > label {
+.auth-form {
+  display: grid;
+  gap: 16px;
+}
+.auth-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.auth-field > label {
   font-size: 0.875rem;
   font-weight: 500;
 }
 .password-input {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding-left: 13px;
-  gap: 9px;
-  margin-top: 8px;
-  color: var(--text-muted);
+  padding: 0 4px 0 13px;
+  gap: 10px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  min-height: 50px;
 }
 .password-input input {
-  flex: 1;
   width: 100%;
-  min-height: 46px;
+  min-width: 0;
+  min-height: 48px;
   padding: 12px 0;
   border: 0;
-  background: transparent;
-  font-size: 0.875rem;
+  border-radius: 0;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 1rem;
 }
 .password-input:focus-within {
+  border-color: var(--primary);
   outline: 2px solid var(--primary);
-  outline-offset: 1px;
+  outline-offset: 2px;
+}
+.password-input.is-invalid {
+  border-color: var(--danger);
+}
+.password-input.is-invalid:focus-within {
+  outline-color: var(--danger);
 }
 .password-input input:focus {
   outline: none;
 }
 .password-input .icon-button {
-  margin-right: 5px;
+  width: 40px;
+  height: 40px;
 }
-.auth-card .notice {
-  margin: 12px 0 0;
+.auth-form .notice,
+.auth-notice {
+  margin: 0;
   font-size: 0.875rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.auth-notice {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-main);
 }
 .auth-submit {
-  margin-top: 18px;
+  margin: 0;
   width: 100%;
-  min-height: 46px;
+  min-height: 48px;
   font-size: 0.875rem;
 }
 .auth-submit svg {
@@ -2955,7 +2996,7 @@ svg {
   }
   .password-input input {
     min-height: 48px;
-    font-size: 0.9375rem;
+    font-size: 1rem;
   }
   .setup-help summary {
     min-height: 40px;
