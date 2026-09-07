@@ -22,6 +22,8 @@ UsageMesh is for people who use AI coding tools on more than one machine and wan
 | **Fork-owned** | Your fork is the workspace. Your dashboard lives at `https://<you>.github.io/<repo>/`. |
 | **Diagnostic analytics** | Overview answers “how much”; Analysis explains concentration, efficiency and high-consumption combinations. |
 
+The dashboard also supports up to 20 named filter views per repository, completed-period comparisons (7 days, 30 days, or previous calendar months), model cost-change attribution, and evidence-based data quality checks. Missing ledgers, absent history, and lower-bound costs are explicitly distinguished. Standard and large reading sizes are available in workspace settings.
+
 ## Redesigned workspace
 
 The dashboard now follows the GrowthOS-Go neutral/violet design language, with light, dark and system themes and mobile navigation. Existing passwords, encrypted ledgers and device setup remain compatible.

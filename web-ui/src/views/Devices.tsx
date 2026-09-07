@@ -1,3 +1,4 @@
+import { DataQuality } from "../components/DataQuality";
 import { useState } from "react";
 import {
   ArrowRight,
@@ -173,15 +174,7 @@ export function Devices({
           />
         )}
       </Section>
-      {dataset.warnings.length > 0 && (
-        <Section title="未能读取的设备" subtitle="以下设备不包含在当前总量中">
-          <ul className="diagnostic-list">
-            {dataset.warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      <DataQuality dataset={dataset} />
       <Section
         title="同步诊断"
         subtitle="心跳在 3 分钟内视为在线，3–10 分钟显示延迟，超过 10 分钟显示离线"

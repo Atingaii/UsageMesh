@@ -518,10 +518,13 @@ function deviceLabelsFor(ledgers: Ledger[]): Map<string, string> {
   return labels;
 }
 
-export function deviceSyncStatus(updatedAt: string): DeviceInfo["status"] {
+export function deviceSyncStatus(
+  updatedAt: string,
+  now = Date.now(),
+): DeviceInfo["status"] {
   const ts = Date.parse(updatedAt);
   if (!Number.isFinite(ts)) return "offline";
-  const age = Math.max(0, Date.now() - ts);
+  const age = Math.max(0, now - ts);
   if (age <= 3 * 60_000) return "online";
   if (age <= 10 * 60_000) return "syncing";
   return "offline";

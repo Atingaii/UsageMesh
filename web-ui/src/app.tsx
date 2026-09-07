@@ -1,3 +1,5 @@
+import { PeriodComparison } from "./components/PeriodComparison";
+import { DataQuality } from "./components/DataQuality";
 import React, {
   Component,
   Suspense,
@@ -53,28 +55,6 @@ function readTab(): ActiveTab {
   const tab = location.hash.slice(1);
   return NAV.some((item) => item.id === tab) ? (tab as ActiveTab) : "overview";
 }
-function parseSaved(repo: string): FilterState | null {
-  try {
-    const value = JSON.parse(
-      readPreference(`usagemesh:view:${repo}`) || "null",
-    );
-    if (
-      !value ||
-      !Object.prototype.hasOwnProperty.call(TIME_LABELS, value.timeRange)
-    )
-      return null;
-    const filters = { ...DEFAULT_FILTERS, timeRange: value.timeRange };
-    for (const key of Object.keys(FILTER_LABELS) as Dimension[])
-      if (typeof value[key] === "string") filters[key] = value[key];
-    if (typeof value.customStartDate === "string")
-      filters.customStartDate = value.customStartDate;
-    if (typeof value.customEndDate === "string")
-      filters.customEndDate = value.customEndDate;
-    return filters;
-  } catch {
-    return null;
-  }
-}
 function App() {
   const [preferences, setPreferences] = useState(readPreferences),
     [activeTab, setActiveTab] = useState(readTab);
@@ -89,8 +69,7 @@ function App() {
     ),
     [mobileOpen, setMobileOpen] = useState(false),
     [connectOpen, setConnectOpen] = useState(false);
-  const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS }),
-    [savedView, setSavedView] = useState<FilterState | null>(null);
+  const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS });
   const dashboard = useDashboard(preferences.refreshSeconds);
   const { dataset, error, syncStatus, checking, checkedAt, sessionNotice } =
     dashboard;
@@ -123,9 +102,6 @@ function App() {
       window.scrollTo(0, 0);
     }
   }, [activeTab, unlocked]);
-  useEffect(() => {
-    if (dataset?.repo) setSavedView(parseSaved(dataset.repo));
-  }, [dataset?.repo]);
   const navigate = (tab: ActiveTab) => {
     location.hash = tab;
     setActiveTab(tab);
@@ -293,21 +269,7 @@ function App() {
               filters={filters}
               options={options}
               onChange={setFilters}
-              saved={Boolean(savedView)}
-              onSave={() => {
-                setSavedView({ ...filters });
-                writePreference(
-                  `usagemesh:view:${dataset.repo}`,
-                  JSON.stringify(filters),
-                );
-              }}
-              onRestore={() => {
-                if (savedView) setFilters({ ...savedView });
-              }}
-              onDelete={() => {
-                setSavedView(null);
-                writePreference(`usagemesh:view:${dataset.repo}`, "null");
-              }}
+              repo={dataset.repo}
             />
             <div className="scope-line">
               <span>
@@ -356,13 +318,20 @@ function App() {
             }
           >
             {activeTab === "overview" && (
-              <Overview
-                records={records}
-                onNavigate={navigate}
-                monthlyCost={month.cost}
-                budget={preferences.monthlyBudget}
-                lowerBound={month.lowerBound}
-              />
+              <div className="view-stack">
+                <PeriodComparison dataset={dataset} filters={filters} />
+                <Overview
+                  records={records}
+                  onNavigate={navigate}
+                  monthlyCost={month.cost}
+                  budget={preferences.monthlyBudget}
+                  lowerBound={month.lowerBound}
+                />
+                <DataQuality
+                  dataset={dataset}
+                  onInspect={() => navigate("devices")}
+                />
+              </div>
             )}
             {activeTab === "analytics" && (
               <Analytics records={records} requests={requests} />

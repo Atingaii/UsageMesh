@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { SavedViews } from "./SavedViews";
+import { useState } from "react";
 import {
   CalendarDays,
-  Check,
   ChevronDown,
   RotateCcw,
   SlidersHorizontal,
@@ -21,22 +21,14 @@ export function FilterBar({
   filters,
   options,
   onChange,
-  saved,
-  onSave,
-  onRestore,
-  onDelete,
+  repo,
 }: {
   filters: FilterState;
   options: DynamicFilterOptions;
   onChange: (filters: FilterState) => void;
-  saved: boolean;
-  onSave: () => void;
-  onRestore: () => void;
-  onDelete: () => void;
+  repo: string;
 }) {
-  const [expanded, setExpanded] = useState(false),
-    [savedNotice, setSavedNotice] = useState(false);
-  useEffect(() => setSavedNotice(false), [filters]);
+  const [expanded, setExpanded] = useState(false);
   const selected = (Object.keys(FILTER_LABELS) as Dimension[]).filter(
     (key) => filters[key] !== "all",
   );
@@ -110,33 +102,12 @@ export function FilterBar({
         {select("tool")}
         {select("model")}
         <span className="filter-spacer" />
-        <button
-          className="text-button"
-          onClick={() => {
-            onSave();
-            setSavedNotice(true);
-          }}
-        >
-          {savedNotice ? <Check size={14} /> : null}
-          {savedNotice ? "已保存视图" : "保存当前视图"}
-        </button>
-        {saved && (
-          <>
-            <button className="text-button" onClick={onRestore}>
-              恢复已存视图
-            </button>
-            <button
-              className="icon-button"
-              aria-label="删除已存视图"
-              onClick={() => {
-                onDelete();
-                setSavedNotice(false);
-              }}
-            >
-              <X size={13} />
-            </button>
-          </>
-        )}
+        <SavedViews
+          key={repo}
+          repo={repo}
+          filters={filters}
+          onChange={onChange}
+        />
       </div>
       {expanded && (
         <div className="filter-row advanced-filters">
