@@ -151,30 +151,26 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web-ui/package-lock.json
-      - name: Validate materialized dashboard invariants
+      - name: Validate dashboard security policy
         working-directory: web-ui
         shell: bash
         run: |
           set -euo pipefail
-          test -s src/app.tsx
           test -s public/usagemesh-icon.svg
           test -s public/device-index.json
-          grep -q "subscriptionSpeedMultiplier" src/app.tsx
-          grep -q "分析工作台" src/app.tsx
-          grep -q "实时请求明细" src/app.tsx
-          grep -q "envelope.iterations < 100_000" src/app.tsx
           grep -q "Content-Security-Policy" index.html
-          ! grep -q "REMEMBERED_WORKSPACE_KEY_PREFIX" src/app.tsx
-          ! grep -q "sessionStorage" src/app.tsx
-          grep -q "const DEVICE_INDEX_BRANCH = 'um-index'" src/app.tsx
-          ! grep -q "FAST_SUBSCRIPTION_MULTIPLIER" src/app.tsx
+          grep -q "no-referrer" index.html
+          ! grep -q "fonts.googleapis.com" src/index.css
+
       - name: Install dashboard dependencies
         working-directory: web-ui
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Typecheck and production build
         working-directory: web-ui
         run: |
           npm run typecheck
+          npm test
+          npm run format:check
           npm run build
 
   upstream-parser-suite:

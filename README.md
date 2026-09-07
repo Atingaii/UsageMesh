@@ -22,6 +22,12 @@ UsageMesh is for people who use AI coding tools on more than one machine and wan
 | **Fork-owned** | Your fork is the workspace. Your dashboard lives at `https://<you>.github.io/<repo>/`. |
 | **Diagnostic analytics** | Overview answers “how much”; Analysis explains concentration, efficiency and high-consumption combinations. |
 
+## Redesigned workspace
+
+The dashboard now follows the GrowthOS-Go neutral/violet design language, with light, dark and system themes and mobile navigation. Existing passwords, encrypted ledgers and device setup remain compatible.
+
+Saved filter views, real pagination, full filtered CSV exports, request details, device diagnostics, explicit partial/failure states, configurable refresh and local monthly cost reminders are included. Request history remains limited by device-side retention. See the [frontend development guide](docs/FRONTEND.md) for setup, module boundaries and verification.
+
 ## Quick start
 
 ### 1. Fork this repository and enable Pages

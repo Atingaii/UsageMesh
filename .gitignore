@@ -10,3 +10,6 @@ Thumbs.db
 !.env.example
 .idea/
 .vscode/
+
+/output/playwright/
+/.playwright-cli/
