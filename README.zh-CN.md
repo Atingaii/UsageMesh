@@ -186,3 +186,7 @@ Dashboard 的“自定义”时间范围支持本地日期与时间并精确到�
 ## License
 
 MIT，第三方来源与继承关系见 [NOTICE](NOTICE)。
+
+## 本地工作台（v2.6.0 起）
+
+运行 `usagemesh serve` 即可打开内置 Web 页面，无需 Node 或 Docker。支持额度快照、项目与会话账本、系统提醒、Codex/Claude 供应商配置预览与回滚、渠道质量分析及只读代理连接器。本地管理数据不上传云端。详细启动方法、密钥处理与数据边界见[本地工作台指南](docs/LOCAL-WORKSPACE.md)。

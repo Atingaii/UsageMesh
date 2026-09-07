@@ -52,6 +52,21 @@ export function Settings({
     <div className="settings-grid">
       <div className="view-stack">
         <Section
+          title="本地工作台"
+          subtitle="在本机管理供应商、额度、项目账本和系统提醒"
+        >
+          <div className="settings-body">
+            <p>
+              安装 UsageMesh 2.6.0
+              或更新版本后，在终端运行以下命令。浏览器会打开独立的本地管理页面。
+            </p>
+            <CopyCommand command="usagemesh serve" />
+            <p>
+              使用终端显示的完整启动链接连接；本地配置、密钥和项目数据不会上传此云端面板。
+            </p>
+          </div>
+        </Section>
+        <Section
           title="界面外观"
           subtitle="延续 GrowthOS 的简洁视觉，选择适合你的亮度"
         >

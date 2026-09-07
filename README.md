@@ -30,6 +30,10 @@ The dashboard now follows the GrowthOS-Go neutral/violet design language, with l
 
 Saved filter views, real pagination, full filtered CSV exports, request details, device diagnostics, explicit partial/failure states, configurable refresh and local monthly cost reminders are included. Request history remains limited by device-side retention. See the [frontend development guide](docs/FRONTEND.md) for setup, module boundaries and verification.
 
+## Local workspace
+
+Run `usagemesh serve` to open the built-in local Web workspace (v2.6.0+). It includes observed quota windows, project/session accounting, native reminders, guarded Codex/Claude provider configuration, channel quality analysis, and read-only proxy connectors. No Node or Docker is needed. Local management data stays on your machine. See the [local workspace guide](docs/LOCAL-WORKSPACE.md) for credentials, source limitations and setup.
+
 ## Quick start
 
 ### 1. Fork this repository and enable Pages

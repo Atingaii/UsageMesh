@@ -1,0 +1,8 @@
+UsageMesh v2.6.0 — local workspace
+
+- Ship a self-contained local Web interface with `usagemesh serve`.
+- Add observed quota windows, project/session accounting and configurable native reminders.
+- Manage Codex and Claude provider configurations with redacted previews, backups and guarded rollback.
+- Inspect channel quality from separately labeled probes and imported events.
+- Connect read-only CLIProxyAPI and OpenAI-compatible model catalogs.
+- Keep local configuration and secrets outside the encrypted GitHub dashboard protocol.

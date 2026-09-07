@@ -4,6 +4,7 @@ mod config;
 mod crypto;
 mod evidence;
 mod github;
+mod local;
 mod model;
 mod pricing;
 mod provider;
@@ -37,6 +38,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CommandKind {
+    /// Open the local-only management workspace. Does not require GitHub setup.
+    Serve {
+        #[arg(long, default_value_t = 43821)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+        /// Isolated home for portable use and testing; never overrides the OS HOME.
+        #[arg(long)]
+        home: Option<PathBuf>,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// Configure the first device. The user's project fork is discovered/created automatically.
     Setup {
         /// Advanced override for a renamed or organization-owned fork.
@@ -624,6 +637,12 @@ fn real_main() -> Result<()> {
         CommandKind::Password { password } => set_dashboard_password(password),
         CommandKind::Sync { full, quiet } => run_sync(full, quiet),
         CommandKind::Status => status(),
+        CommandKind::Serve {
+            port,
+            no_open,
+            home,
+            data_dir,
+        } => local::serve(port, !no_open, home, data_dir),
         CommandKind::Clients => {
             for client in collector::supported_clients() {
                 println!("{client}");
