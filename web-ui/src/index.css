@@ -4,7 +4,7 @@
 :root {
   color-scheme: light;
   --font-sans:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, ui-sans-serif,
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono:
     "SFMono-Regular", "SF Mono", Monaco, Consolas, "Liberation Mono", monospace;
@@ -13,7 +13,7 @@
   --bg-card-hover: #f4f4f5;
   --text-primary: #18181b;
   --text-secondary: #52525b;
-  --text-muted: #71717a;
+  --text-muted: #62626d;
   --border-color: #e4e4e7;
   --border-subtle: #eeeef0;
   --primary: #625df5;
@@ -53,17 +53,20 @@
 * {
   box-sizing: border-box;
 }
+html[data-text-size="large"] {
+  font-size: 112.5%;
+}
 html {
   font-family: var(--font-sans);
   background: var(--bg-main);
   color: var(--text-primary);
-  -webkit-font-smoothing: antialiased;
+  font-size: 100%;
   text-rendering: optimizeLegibility;
 }
 body {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 1rem;
+  line-height: 1.6;
 }
 button,
 input,
@@ -129,9 +132,11 @@ h1:focus {
   background: color-mix(in srgb, var(--primary) 22%, transparent);
 }
 code,
-.mono,
-.numeric {
+.mono {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.numeric {
   font-variant-numeric: tabular-nums;
 }
 svg {
@@ -149,7 +154,7 @@ svg {
   color: var(--text-muted);
 }
 .small {
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .success-text {
   color: var(--green);
@@ -170,7 +175,7 @@ svg {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-card);
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -215,7 +220,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--primary);
   border: 0;
   background: none;
@@ -234,7 +239,7 @@ svg {
   padding: 3px 7px;
   background: var(--bg-card-hover);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -269,7 +274,7 @@ svg {
 }
 .eyebrow {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
   letter-spacing: 1.8px;
   font-family: var(--font-mono);
   font-weight: 500;
@@ -289,7 +294,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-weight: 650;
   letter-spacing: -0.65px;
   white-space: nowrap;
@@ -299,7 +304,7 @@ svg {
 }
 .brand-caption {
   display: block;
-  font-size: 8px;
+  font-size: 0.75rem;
   letter-spacing: 1.1px;
   color: var(--text-muted);
   font-weight: 400;
@@ -333,11 +338,17 @@ svg {
   width: 26px;
 }
 .sidebar-brand .brand {
-  font-size: 16px;
+  min-width: 0;
+  font-size: 1rem;
   gap: 9px;
 }
+.sidebar-brand .brand > span {
+  min-width: 0;
+}
 .sidebar-brand .brand-caption {
-  font-size: 7px;
+  white-space: normal;
+  letter-spacing: 0.4px;
+  font-size: 0.75rem;
 }
 .workspace-label {
   display: flex;
@@ -358,7 +369,7 @@ svg {
   border-radius: 7px;
   background: var(--accent);
   color: var(--primary);
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -366,12 +377,12 @@ svg {
   min-width: 0;
 }
 .workspace-label strong {
-  font-size: 11px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 .workspace-label div > span {
   display: block;
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   max-width: 155px;
   overflow: hidden;
@@ -381,7 +392,7 @@ svg {
 .nav-section {
   margin: 22px 12px 10px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .nav-item {
   display: flex;
@@ -394,7 +405,7 @@ svg {
   background: transparent;
   padding: 10px 12px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.875rem;
   text-align: left;
   margin-bottom: 5px;
 }
@@ -417,7 +428,7 @@ svg {
   color: var(--primary);
 }
 .nav-count {
-  font-size: 10px;
+  font-size: 0.8125rem;
   background: var(--bg-main);
   border: 1px solid var(--border-color);
   border-radius: 4px;
@@ -445,18 +456,18 @@ svg {
 }
 .connect-card strong {
   display: block;
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 550;
 }
 .connect-card p {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   line-height: 1.9;
   margin: 6px 0 13px;
 }
 .connect-card .button {
   width: 100%;
-  font-size: 11px;
+  font-size: 0.875rem;
   min-height: 35px;
   padding: 6px;
 }
@@ -471,7 +482,7 @@ svg {
   border-top: 1px solid var(--border-subtle);
   margin-top: 12px;
   padding: 12px;
-  font-size: 8px;
+  font-size: 0.75rem;
   color: var(--text-muted);
   letter-spacing: 1.15px;
   font-family: var(--font-mono);
@@ -498,7 +509,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 13px;
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
 }
 .breadcrumb strong {
@@ -514,7 +525,7 @@ svg {
   display: inline-flex;
   gap: 7px;
   align-items: center;
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -533,7 +544,7 @@ svg {
   margin-left: 13px;
   text-align: center;
   padding-top: 5px;
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .main-content {
   width: 100%;
@@ -551,7 +562,7 @@ svg {
   margin-bottom: 26px;
 }
 .page-heading .eyebrow {
-  font-size: 9px;
+  font-size: 0.75rem;
   letter-spacing: 1.4px;
   margin-bottom: 7px;
 }
@@ -561,22 +572,22 @@ svg {
   gap: 12px;
 }
 .page-title h1 {
-  font-size: 27px;
+  font-size: 1.6875rem;
   font-weight: 620;
   letter-spacing: -0.8px;
   line-height: 1.5;
 }
 .page-title .badge {
   background: var(--bg-card);
-  font-size: 9px;
+  font-size: 0.75rem;
 }
 .page-heading p {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 0.875rem;
   margin-top: 5px;
 }
 .page-actions .button {
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .view-stack {
   display: flex;
@@ -616,7 +627,7 @@ svg {
   color: var(--text-secondary);
   border: 0;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 0.875rem;
   min-height: 32px;
   padding: 6px 12px;
 }
@@ -636,7 +647,7 @@ svg {
 .filter-primary-right .button {
   min-height: 30px;
   padding: 6px 8px;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .count {
   border-radius: 4px;
@@ -664,7 +675,7 @@ svg {
   max-width: 270px;
 }
 .filter-select > span {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -675,7 +686,7 @@ svg {
   min-height: 33px;
   flex: 1;
   width: 100px;
-  font-size: 11px;
+  font-size: 0.875rem;
   background: transparent;
 }
 .filter-select svg {
@@ -688,7 +699,7 @@ svg {
   flex: 1;
 }
 .filter-row > .text-button {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .advanced-filters {
@@ -706,7 +717,7 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .custom-range small {
   color: var(--text-muted);
@@ -718,7 +729,7 @@ svg {
 .filter-error {
   padding: 8px 16px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .filter-chips {
   display: flex;
@@ -738,14 +749,14 @@ svg {
   border: 1px solid var(--accent-border);
   border-radius: 5px;
   padding: 4px 7px;
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .scope-line {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
   padding: 12px 1px 16px;
 }
 .footer-dot {
@@ -771,7 +782,7 @@ svg {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
 }
 .kpi-icon {
@@ -798,7 +809,7 @@ svg {
   color: #4996be;
 }
 .kpi-value {
-  font-size: clamp(24px, 2.3vw, 34px);
+  font-size: clamp(1.5rem, 2.3vw, 2.125rem);
   letter-spacing: -1.4px;
   font-weight: 550;
   margin-top: 10px;
@@ -807,7 +818,7 @@ svg {
   overflow-wrap: anywhere;
 }
 .kpi-note {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   margin-top: 7px;
 }
@@ -815,7 +826,7 @@ svg {
   display: block;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 7px;
+  font-size: 0.75rem;
   letter-spacing: 1px;
   margin-top: 18px;
   opacity: 0.85;
@@ -837,7 +848,7 @@ svg {
   flex-wrap: wrap;
 }
 .panel-heading h2 {
-  font-size: 13px;
+  font-size: 0.9375rem;
   font-weight: 580;
   display: flex;
   align-items: center;
@@ -845,7 +856,7 @@ svg {
 }
 .panel-heading p {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
   margin-top: 5px;
   line-height: 1.7;
 }
@@ -853,12 +864,12 @@ svg {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .inline-select select {
   min-height: 33px;
-  font-size: 11px;
+  font-size: 0.875rem;
   padding: 6px 9px;
   color: var(--text-secondary);
 }
@@ -876,7 +887,7 @@ svg {
   align-items: center;
   gap: 8px;
   padding: 0 22px;
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
 }
 .chart-summary strong {
@@ -885,7 +896,7 @@ svg {
   margin-left: 3px;
 }
 .chart-summary .small {
-  font-size: 9px;
+  font-size: 0.75rem;
 }
 .legend-dot {
   width: 7px;
@@ -902,7 +913,7 @@ svg {
   border-top: 1px solid var(--border-subtle);
   padding: 11px 21px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 0.75rem;
   display: flex;
   justify-content: space-between;
   gap: 10px;
@@ -918,17 +929,17 @@ svg {
   padding: 0 22px;
 }
 .token-total .eyebrow {
-  font-size: 8px;
+  font-size: 0.75rem;
   letter-spacing: 1px;
 }
 .token-total strong {
-  font-size: 30px;
+  font-size: 1.875rem;
   font-weight: 550;
   letter-spacing: -1px;
   margin-top: 4px;
 }
 .token-total > span:last-child {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .token-stacked {
@@ -950,7 +961,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 0.8125rem;
   margin-bottom: 10px;
   color: var(--text-secondary);
 }
@@ -958,17 +969,17 @@ svg {
   margin-left: auto;
   font-weight: 500;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .token-legend small {
   width: 38px;
   text-align: right;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 0.75rem;
 }
 .token-detail {
   margin: auto 22px 13px;
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .overview-rank-grid {
   display: grid;
@@ -989,7 +1000,7 @@ svg {
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .ranking-title > span:nth-child(2) {
   overflow: hidden;
@@ -1006,14 +1017,14 @@ svg {
 }
 .ranking-title strong {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-weight: 500;
   font-family: var(--font-mono);
   white-space: nowrap;
 }
 .ranking-title small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 0.75rem;
   min-width: 34px;
   text-align: right;
 }
@@ -1030,7 +1041,7 @@ svg {
 }
 .ranking-list > p {
   margin-top: 12px;
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .insight-strip {
   display: flex;
@@ -1042,17 +1053,17 @@ svg {
   border-radius: 10px;
 }
 .insight-strip strong {
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 550;
 }
 .insight-strip p {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   margin-top: 4px;
 }
 .insight-strip .button {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 0.875rem;
   flex-shrink: 0;
 }
 .workspace-footer {
@@ -1060,7 +1071,7 @@ svg {
   flex-wrap: wrap;
   align-items: center;
   gap: 20px;
-  font-size: 9px;
+  font-size: 0.75rem;
   color: var(--text-muted);
   padding: 18px 34px;
   border-top: 1px solid var(--border-color);
@@ -1112,7 +1123,7 @@ svg {
   padding: 13px 16px;
   border: 1px solid var(--accent-border);
   border-radius: 9px;
-  font-size: 12px;
+  font-size: 0.875rem;
   margin-bottom: 18px;
   overflow-wrap: anywhere;
 }
@@ -1152,12 +1163,12 @@ svg {
   gap: 9px;
 }
 .empty-state h3 {
-  font-size: 14px;
+  font-size: 1rem;
   font-weight: 500;
   margin-top: 6px;
 }
 .empty-state p {
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   max-width: 430px;
 }
@@ -1171,7 +1182,7 @@ svg {
   flex-wrap: wrap;
 }
 .table-actions .button {
-  font-size: 11px;
+  font-size: 0.875rem;
   min-height: 34px;
   padding: 7px 11px;
 }
@@ -1200,7 +1211,7 @@ svg {
   background: transparent;
   width: 100%;
   min-width: 0;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .search-input:focus-within {
   outline: 2px solid var(--primary);
@@ -1217,14 +1228,14 @@ svg {
 .table-scroll table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 0.875rem;
   white-space: nowrap;
 }
 .table-scroll th {
   text-align: left;
   padding: 13px 16px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-weight: 500;
   background: var(--bg-main);
   border-top: 1px solid var(--border-subtle);
@@ -1265,7 +1276,7 @@ svg {
 }
 .model-link {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--primary);
   background: transparent;
   border: 0;
@@ -1283,7 +1294,7 @@ svg {
   gap: 12px;
   padding: 12px 18px;
   border-top: 1px solid var(--border-color);
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .pagination > div {
@@ -1293,7 +1304,7 @@ svg {
 }
 .pagination select {
   border: 0;
-  font-size: 10px;
+  font-size: 0.8125rem;
   padding: 6px;
 }
 .pagination .icon-button {
@@ -1305,7 +1316,7 @@ svg {
   padding: 12px 20px;
   background: var(--bg-main);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
   border-top: 1px solid var(--border-subtle);
 }
 .analysis-stats {
@@ -1320,16 +1331,16 @@ svg {
   gap: 8px;
 }
 .analysis-stats span {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
 }
 .analysis-stats strong {
-  font-size: 25px;
+  font-size: 1.5625rem;
   font-weight: 550;
   letter-spacing: -0.8px;
 }
 .analysis-stats small {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .contribution-layout {
@@ -1342,7 +1353,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 10px;
+  font-size: 0.8125rem;
   margin: 14px 0;
 }
 .contribution-row > span {
@@ -1359,7 +1370,7 @@ svg {
   border-radius: 3px;
 }
 .contribution-row strong {
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-weight: 500;
   min-width: 55px;
   text-align: right;
@@ -1368,7 +1379,7 @@ svg {
   min-width: 35px;
   color: var(--text-muted);
   text-align: right;
-  font-size: 9px;
+  font-size: 0.75rem;
 }
 .concentration {
   background: var(--bg-main);
@@ -1379,22 +1390,22 @@ svg {
   margin-top: 10px;
 }
 .concentration .eyebrow {
-  font-size: 8px;
+  font-size: 0.75rem;
   letter-spacing: 0.8px;
 }
 .concentration > strong {
   display: block;
-  font-size: 38px;
+  font-size: 2.375rem;
   font-weight: 500;
   letter-spacing: -1.3px;
   margin: 12px 0 0;
 }
 .concentration strong small {
-  font-size: 18px;
+  font-size: 1.125rem;
   color: var(--text-muted);
 }
 .concentration p {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   margin: 5px 0 20px;
 }
@@ -1402,7 +1413,7 @@ svg {
   margin-bottom: 14px;
 }
 .concentration p:last-child {
-  font-size: 10px;
+  font-size: 0.8125rem;
   margin-bottom: 0;
   line-height: 1.8;
 }
@@ -1437,7 +1448,7 @@ svg {
   border-radius: 5px;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .device-summary {
   display: flex;
@@ -1457,15 +1468,15 @@ svg {
   color: var(--primary);
 }
 .device-summary strong {
-  font-size: 27px;
+  font-size: 1.6875rem;
   font-weight: 500;
 }
 .device-summary span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .device-toolbar select {
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .device-grid {
   display: grid;
@@ -1494,13 +1505,13 @@ svg {
   place-items: center;
 }
 .device-card h3 {
-  font-size: 14px;
+  font-size: 1rem;
   font-weight: 550;
   margin: 16px 0 4px;
   overflow-wrap: anywhere;
 }
 .device-card > p {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .device-card > p > span {
@@ -1515,16 +1526,16 @@ svg {
 }
 .device-metrics strong {
   display: block;
-  font-size: 14px;
+  font-size: 1rem;
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 .device-metrics span {
-  font-size: 9px;
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 .device-card dl {
-  font-size: 9px;
+  font-size: 0.75rem;
   line-height: 2.5;
   margin: 14px 0;
 }
@@ -1541,7 +1552,7 @@ svg {
   margin: 0;
 }
 .device-card .text-button {
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .diagnostic-grid {
   display: grid;
@@ -1558,18 +1569,18 @@ svg {
   color: var(--primary);
 }
 .diagnostic-grid h3 {
-  font-size: 12px;
+  font-size: 0.875rem;
   margin: 10px 0 5px;
 }
 .diagnostic-grid p {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   margin-bottom: 13px;
 }
 .diagnostic-list {
   padding: 0 22px 20px 40px;
   color: var(--amber);
-  font-size: 11px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 .settings-grid {
@@ -1581,7 +1592,7 @@ svg {
   padding: 0 22px 22px;
 }
 .settings-body > label {
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .theme-options {
   display: grid;
@@ -1604,7 +1615,7 @@ svg {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 0.875rem;
   margin-top: 10px;
 }
 .theme-options button.selected > span:last-child {
@@ -1648,7 +1659,7 @@ svg {
   justify-content: space-between;
   gap: 15px;
   padding: 15px 0;
-  font-size: 12px;
+  font-size: 0.875rem;
   border-bottom: 1px solid var(--border-subtle);
 }
 .setting-row:last-child {
@@ -1664,12 +1675,12 @@ svg {
 }
 .setting-row small {
   display: block;
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   margin-top: 5px;
 }
 .setting-row select {
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .budget-input {
   display: flex;
@@ -1693,7 +1704,7 @@ svg {
 .budget-progress > div:first-child {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 0.875rem;
   margin-bottom: 10px;
 }
 .budget-progress strong {
@@ -1705,7 +1716,7 @@ svg {
 .workspace-info {
   padding: 0 22px;
   margin: 0;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 .workspace-info > div {
   padding: 13px 0;
@@ -1737,7 +1748,7 @@ svg {
   padding: 10px 22px 20px;
 }
 .privacy-notes p {
-  font-size: 12px;
+  font-size: 0.875rem;
   line-height: 1.9;
   color: var(--text-muted);
   margin-bottom: 13px;
@@ -1752,7 +1763,7 @@ svg {
   padding: 5px 6px 5px 12px;
 }
 .command code {
-  font-size: 11px;
+  font-size: 0.875rem;
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1762,7 +1773,7 @@ svg {
   height: 30px;
 }
 .command small {
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .modal {
   color: var(--text-primary);
@@ -1789,11 +1800,11 @@ svg {
   margin-bottom: 16px;
 }
 .modal-heading h2 {
-  font-size: 19px;
+  font-size: 1.1875rem;
   font-weight: 550;
 }
 .modal > p {
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .connect-steps {
   list-style: none;
@@ -1814,7 +1825,7 @@ svg {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-family: var(--font-mono);
 }
 .connect-steps li > div {
@@ -1822,11 +1833,11 @@ svg {
   min-width: 0;
 }
 .connect-steps h3 {
-  font-size: 13px;
+  font-size: 0.9375rem;
   font-weight: 550;
 }
 .connect-steps p {
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   margin: 5px 0 10px;
   line-height: 1.8;
@@ -1836,7 +1847,7 @@ svg {
   margin: 0 3px;
 }
 .modal .notice {
-  font-size: 11px;
+  font-size: 0.875rem;
   margin-bottom: 0;
 }
 .record-detail {
@@ -1851,11 +1862,11 @@ svg {
   min-width: 0;
 }
 .record-detail dt {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .record-detail dd {
-  font-size: 12px;
+  font-size: 0.875rem;
   margin: 5px 0 0;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
@@ -1878,7 +1889,7 @@ svg {
   display: none;
 }
 .auth-header .brand {
-  font-size: 19px;
+  font-size: 1.1875rem;
 }
 .auth-header .button {
   min-height: 36px;
@@ -1897,7 +1908,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 9px;
+  font-size: 0.75rem;
   color: var(--primary);
   letter-spacing: 1.4px;
 }
@@ -1918,7 +1929,7 @@ svg {
   color: var(--primary);
 }
 .auth-lead {
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.9;
   color: var(--text-muted);
 }
@@ -1940,11 +1951,11 @@ svg {
   stroke-width: 1.5;
 }
 .auth-features strong {
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 550;
 }
 .auth-features span {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -1960,26 +1971,26 @@ svg {
 }
 .auth-tools > span:first-child {
   width: 100%;
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
   margin-bottom: -8px;
 }
 .tool-word {
-  font-size: 13px;
+  font-size: 0.9375rem;
   font-weight: 500;
   display: flex;
   gap: 7px;
   align-items: center;
 }
 .tool-glyph {
-  font-size: 21px;
+  font-size: 1.3125rem;
 }
 .claude-glyph {
-  font-size: 24px;
+  font-size: 1.5rem;
   color: #c58564;
 }
 .tool-more {
-  font-size: 10px;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 .auth-card {
@@ -2012,12 +2023,12 @@ svg {
   border-radius: 12px;
 }
 .auth-card h2 {
-  font-size: 24px;
+  font-size: 1.5rem;
   font-weight: 580;
   letter-spacing: -0.8px;
 }
 .auth-card > p {
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--text-muted);
   margin-top: 8px;
 }
@@ -2031,7 +2042,7 @@ svg {
   background: var(--bg-main);
   margin: 23px 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
@@ -2039,7 +2050,7 @@ svg {
   min-width: 0;
 }
 .auth-card form > label {
-  font-size: 12px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 .password-input {
@@ -2059,7 +2070,7 @@ svg {
   padding: 12px 0;
   border: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .password-input:focus-within {
   outline: 2px solid var(--primary);
@@ -2073,13 +2084,13 @@ svg {
 }
 .auth-card .notice {
   margin: 12px 0 0;
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .auth-submit {
   margin-top: 18px;
   width: 100%;
   min-height: 46px;
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .auth-submit svg {
   margin-left: auto;
@@ -2105,12 +2116,12 @@ svg {
   color: var(--green);
 }
 .auth-security p {
-  font-size: 10px;
+  font-size: 0.8125rem;
   line-height: 1.8;
 }
 .setup-help {
   margin-top: 20px;
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--text-muted);
 }
 .setup-help summary {
@@ -2133,7 +2144,7 @@ svg {
   gap: 15px;
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 0.8125rem;
 }
 .auth-footer > span:last-child {
   display: inline-flex;
@@ -2152,7 +2163,7 @@ svg {
   text-align: center;
 }
 .loading-screen h1 {
-  font-size: 22px;
+  font-size: 1.375rem;
   color: var(--text-primary);
 }
 .loading-view {
@@ -2232,7 +2243,7 @@ svg {
     padding: 38px 42px;
   }
   .kpi-value {
-    font-size: 36px;
+    font-size: 2.25rem;
   }
   .trend-chart {
     height: 265px;
@@ -2247,10 +2258,10 @@ svg {
     padding: 0 10px;
   }
   .sidebar-brand .brand {
-    font-size: 14px;
+    font-size: 1rem;
   }
   .sidebar-brand .brand-caption {
-    font-size: 6px;
+    font-size: 0.75rem;
   }
   .workspace-body {
     margin-left: 210px;
@@ -2268,10 +2279,10 @@ svg {
     padding: 15px;
   }
   .kpi-value {
-    font-size: 27px;
+    font-size: 1.6875rem;
   }
   .kpi-note {
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .device-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2301,7 +2312,7 @@ svg {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .kpi-value {
-    font-size: 32px;
+    font-size: 2rem;
   }
   .kpi-tag {
     margin-top: 12px;
@@ -2310,7 +2321,7 @@ svg {
     grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
   }
   .token-total strong {
-    font-size: 27px;
+    font-size: 1.6875rem;
   }
   .settings-grid {
     grid-template-columns: 1fr;
@@ -2338,7 +2349,7 @@ svg {
     white-space: normal;
   }
   .auth-narrative h1 {
-    font-size: 38px;
+    font-size: 2.375rem;
   }
   .device-summary {
     gap: 12px;
@@ -2349,7 +2360,7 @@ svg {
     gap: 8px;
   }
   .device-summary span {
-    font-size: 10px;
+    font-size: 0.8125rem;
   }
 }
 @media (max-width: 800px) {
@@ -2380,11 +2391,11 @@ svg {
     gap: 32px;
   }
   .auth-narrative h1 {
-    font-size: 39px;
+    font-size: 2.4375rem;
     margin: 15px 0;
   }
   .auth-lead {
-    font-size: 14px;
+    font-size: 1rem;
   }
   .auth-features,
   .auth-tools {
@@ -2410,7 +2421,7 @@ svg {
 }
 @media (max-width: 600px) {
   body {
-    font-size: 14px;
+    font-size: 1rem;
   }
   .desktop-only {
     display: none !important;
@@ -2452,25 +2463,25 @@ svg {
     flex-wrap: wrap;
   }
   .page-title h1 {
-    font-size: 25px;
+    font-size: 1.5625rem;
   }
   .page-title .badge {
-    font-size: 8px;
+    font-size: 0.75rem;
   }
   .page-heading p {
-    font-size: 11px;
+    font-size: 0.875rem;
     max-width: 230px;
     line-height: 1.8;
   }
   .page-heading .eyebrow {
-    font-size: 8px;
+    font-size: 0.75rem;
     letter-spacing: 0.8px;
   }
   .page-actions {
     margin-top: 24px;
   }
   .page-actions .button {
-    font-size: 10px;
+    font-size: 0.8125rem;
     padding: 7px 9px;
     gap: 5px;
   }
@@ -2496,7 +2507,7 @@ svg {
   }
   .periods button {
     padding: 8px 10px;
-    font-size: 10px;
+    font-size: 0.8125rem;
     min-height: 40px;
   }
   .filter-primary-right {
@@ -2514,7 +2525,7 @@ svg {
     width: 16px;
   }
   .filter-primary-right .count {
-    font-size: 9px;
+    font-size: 0.75rem;
     margin-left: 4px;
   }
   .filter-primary-right .icon-button {
@@ -2531,10 +2542,10 @@ svg {
   }
   .filter-select select {
     min-height: 40px;
-    font-size: 11px;
+    font-size: 0.875rem;
   }
   .filter-select > span {
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .filter-row > .text-button {
     min-height: 32px;
@@ -2558,7 +2569,7 @@ svg {
     padding-bottom: 0;
   }
   .scope-line {
-    font-size: 9px;
+    font-size: 0.75rem;
     padding: 11px 0 13px;
   }
   .scope-line > span:last-child {
@@ -2571,7 +2582,7 @@ svg {
     padding: 13px;
   }
   .kpi-top {
-    font-size: 10px;
+    font-size: 0.8125rem;
   }
   .kpi-icon {
     width: 25px;
@@ -2581,16 +2592,16 @@ svg {
     width: 14px;
   }
   .kpi-value {
-    font-size: 28px;
+    font-size: 1.75rem;
     letter-spacing: -0.8px;
   }
   .kpi-note {
-    font-size: 9px;
+    font-size: 0.75rem;
     line-height: 1.7;
     min-height: 30px;
   }
   .kpi-tag {
-    font-size: 6px;
+    font-size: 0.75rem;
     letter-spacing: 0.8px;
     margin-top: 8px;
   }
@@ -2603,10 +2614,10 @@ svg {
     padding: 17px 16px 14px;
   }
   .panel-heading h2 {
-    font-size: 13px;
+    font-size: 0.9375rem;
   }
   .panel-heading p {
-    font-size: 10px;
+    font-size: 0.8125rem;
   }
   .inline-select select {
     min-height: 40px;
@@ -2620,7 +2631,7 @@ svg {
     padding: 0 17px;
   }
   .chart-footnote {
-    font-size: 8px;
+    font-size: 0.75rem;
     padding: 10px 16px;
   }
   .chart-footnote > span:last-child {
@@ -2639,7 +2650,7 @@ svg {
   }
   .token-legend > div {
     margin-bottom: 13px;
-    font-size: 11px;
+    font-size: 0.875rem;
   }
   .token-detail {
     min-height: 36px;
@@ -2649,7 +2660,7 @@ svg {
     padding: 0 16px 18px;
   }
   .ranking-title {
-    font-size: 11px;
+    font-size: 0.875rem;
   }
   .ranking-item {
     margin-top: 18px;
@@ -2669,7 +2680,7 @@ svg {
   .workspace-footer {
     padding: 16px;
     gap: 12px;
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .workspace-footer > a:first-of-type {
     margin-left: 0;
@@ -2687,10 +2698,10 @@ svg {
   }
   .search-input input {
     min-height: 43px;
-    font-size: 12px;
+    font-size: 0.875rem;
   }
   .table-search-row > .small {
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .table-actions .button {
     min-height: 44px;
@@ -2732,26 +2743,26 @@ svg {
     padding: 14px;
   }
   .analysis-stats span {
-    font-size: 10px;
+    font-size: 0.8125rem;
   }
   .analysis-stats strong {
-    font-size: 23px;
+    font-size: 1.4375rem;
   }
   .analysis-stats small {
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .contribution-layout {
     padding: 0 16px 16px;
   }
   .contribution-row {
     gap: 8px;
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .contribution-row > span {
     width: 100px;
   }
   .contribution-row strong {
-    font-size: 9px;
+    font-size: 0.75rem;
     min-width: 46px;
   }
   .contribution-row small {
@@ -2768,11 +2779,11 @@ svg {
     width: 16px;
   }
   .device-summary strong {
-    font-size: 23px;
+    font-size: 1.4375rem;
   }
   .device-summary span {
     width: 100%;
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .device-grid {
     grid-template-columns: 1fr;
@@ -2786,11 +2797,16 @@ svg {
   .device-toolbar select {
     min-height: 44px;
   }
+  .device-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
   .device-metrics strong {
-    font-size: 17px;
+    white-space: nowrap;
+    font-size: 1.0625rem;
   }
   .device-card dl {
-    font-size: 10px;
+    font-size: 0.8125rem;
   }
   .device-card .text-button {
     min-height: 40px;
@@ -2810,7 +2826,7 @@ svg {
     padding: 7px;
   }
   .theme-options > button > span:last-child {
-    font-size: 10px;
+    font-size: 0.8125rem;
     flex-wrap: wrap;
     min-height: 28px;
   }
@@ -2849,7 +2865,7 @@ svg {
     padding-left: 16px;
   }
   .notice {
-    font-size: 11px;
+    font-size: 0.875rem;
     padding: 12px;
     flex-wrap: wrap;
   }
@@ -2882,7 +2898,7 @@ svg {
     max-width: 65%;
   }
   .modal-heading h2 {
-    font-size: 18px;
+    font-size: 1.125rem;
   }
   .command .icon-button {
     min-width: 40px;
@@ -2892,10 +2908,10 @@ svg {
     padding: 16px 20px;
   }
   .auth-header .brand {
-    font-size: 18px;
+    font-size: 1.125rem;
   }
   .auth-header .button {
-    font-size: 11px;
+    font-size: 0.875rem;
   }
   .auth-main {
     padding: 34px 20px 44px;
@@ -2906,11 +2922,11 @@ svg {
   }
   .auth-narrative .eyebrow {
     justify-content: flex-start;
-    font-size: 8px;
+    font-size: 0.75rem;
     letter-spacing: 1px;
   }
   .auth-narrative h1 {
-    font-size: 34px;
+    font-size: 2.125rem;
     letter-spacing: -1px;
     margin: 17px 0 13px;
   }
@@ -2918,7 +2934,7 @@ svg {
     display: block;
   }
   .auth-lead {
-    font-size: 13px;
+    font-size: 0.9375rem;
     line-height: 1.9;
   }
   .auth-card {
@@ -2926,10 +2942,10 @@ svg {
     border-radius: 12px;
   }
   .auth-card h2 {
-    font-size: 22px;
+    font-size: 1.375rem;
   }
   .auth-card > p {
-    font-size: 11px;
+    font-size: 0.875rem;
   }
   .auth-card-top {
     margin-bottom: 19px;
@@ -2939,7 +2955,7 @@ svg {
   }
   .password-input input {
     min-height: 48px;
-    font-size: 13px;
+    font-size: 0.9375rem;
   }
   .setup-help summary {
     min-height: 40px;
@@ -2947,10 +2963,10 @@ svg {
   }
   .auth-footer {
     padding: 18px 20px;
-    font-size: 9px;
+    font-size: 0.75rem;
   }
   .auth-footer > span:last-child {
-    font-size: 8px;
+    font-size: 0.75rem;
   }
 }
 @media (prefers-reduced-motion: reduce) {

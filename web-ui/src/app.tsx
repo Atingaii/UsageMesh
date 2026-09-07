@@ -105,6 +105,7 @@ function App() {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
   useEffect(() => {
+    document.documentElement.dataset.textSize = preferences.textSize;
     writePreference("usagemesh:preferences:v1", JSON.stringify(preferences));
   }, [preferences]);
   useEffect(() => {

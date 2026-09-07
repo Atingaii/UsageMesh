@@ -150,7 +150,7 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
               />
               <XAxis
                 dataKey="label"
-                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                tick={{ fill: "var(--text-muted)", fontSize: "0.8125rem" }}
                 tickLine={false}
                 axisLine={false}
                 minTickGap={35}
@@ -160,7 +160,7 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
                 tickFormatter={
                   metric === "cost" ? (v) => money(Number(v), 0) : compact
                 }
-                tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+                tick={{ fill: "var(--text-muted)", fontSize: "0.8125rem" }}
                 tickLine={false}
                 axisLine={false}
                 width={55}
@@ -171,7 +171,7 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
                   border: "1px solid var(--border-color)",
                   borderRadius: 10,
                   color: "var(--text-primary)",
-                  fontSize: 12,
+                  fontSize: "0.875rem",
                 }}
                 labelFormatter={(_, items) =>
                   String(items[0]?.payload?.date || "")

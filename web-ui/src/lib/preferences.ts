@@ -1,9 +1,11 @@
 export interface Preferences {
+  textSize: "standard" | "large";
   theme: "light" | "dark" | "system";
   refreshSeconds: 0 | 10 | 30 | 60;
   monthlyBudget: number;
 }
 export const DEFAULT_PREFERENCES: Preferences = {
+  textSize: "standard",
   theme: "system",
   refreshSeconds: 10,
   monthlyBudget: 0,
@@ -29,6 +31,7 @@ export function readPreferences(): Preferences {
     ) as Partial<Preferences>;
     const oldTheme = readPreference("usagemesh:theme");
     return {
+      textSize: value.textSize === "large" ? "large" : "standard",
       theme: ["light", "dark", "system"].includes(value.theme || "")
         ? value.theme!
         : oldTheme === "dark"

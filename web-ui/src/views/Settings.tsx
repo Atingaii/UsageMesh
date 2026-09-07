@@ -56,6 +56,25 @@ export function Settings({
           subtitle="延续 GrowthOS 的简洁视觉，选择适合你的亮度"
         >
           <div className="settings-body">
+            <label className="setting-row">
+              <span>
+                <strong>阅读字号</strong>
+                <small>调整全站文字大小，选择后立即生效</small>
+              </span>
+              <select
+                aria-label="阅读字号"
+                value={preferences.textSize}
+                onChange={(event) =>
+                  onChange({
+                    ...preferences,
+                    textSize: event.target.value as Preferences["textSize"],
+                  })
+                }
+              >
+                <option value="standard">标准 · 清晰阅读</option>
+                <option value="large">大字 · 放大 12.5%</option>
+              </select>
+            </label>
             <div className="theme-options">
               {(
                 [
@@ -257,7 +276,10 @@ export function Settings({
               同一标签页可恢复加密会话；闲置 30 分钟、超过 12
               小时或手动锁定后需要重新解锁。
             </p>
-            <p>外观、刷新间隔和提醒阈值保存在当前浏览器，不随 GitHub 同步。</p>
+            <p>
+              外观、阅读字号、刷新间隔和提醒阈值保存在当前浏览器，不随 GitHub
+              同步。
+            </p>
             <p>修改工作区密码，请在已加入的设备运行：</p>
             <CopyCommand command="usagemesh password" />
           </div>
