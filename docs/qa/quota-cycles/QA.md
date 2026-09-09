@@ -4,7 +4,7 @@
 
 ## 自动检查
 
-- Rust：`cargo test --workspace --all-targets`，88 项通过、1 项真实连接 smoke 默认忽略。真实 Codex 0.152.1 的只读 App Server 连接另行实际验证成功。
+- Rust：`cargo test --workspace --all-targets`，90 项通过、1 项真实连接 smoke 默认忽略。真实 Codex 0.152.1 的只读 App Server 连接另行实际验证成功；将 PATH 限为 `/usr/bin:/bin` 后，真实连接 smoke 仍在 2.54 秒通过。
 - Web：`npm run typecheck`、`npm test`（11 文件 / 68 项）、`npm run build`、`npm run format:check` 通过。
 - 本地 JavaScript：`node --check`，预测 DOM / SVG 几何 / CSP smoke 通过。
 - 覆盖多账号及额度隔离、跨设备重复快照、不同调整分段、过期和未来观测、零用量滑动窗口、异常采样、历史兼容和容量输入校验。

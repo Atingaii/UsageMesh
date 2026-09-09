@@ -12,3 +12,4 @@ UsageMesh v2.7.0 — official subscription cycles across devices
 - Polish typography, input spacing, focus states and compact responsive layouts with local Antigravity assistance.
 - Avoid zero-usage sliding-window history spam; preserve same-account daily usage cache on transient failure.
 - Throttle background official sampling to five minutes and retain a pending marker until publication succeeds, while preserving locally collected records.
+- Discover installed Codex executables under minimal background-service PATH environments, including standalone and common package-manager locations.

@@ -2,8 +2,10 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
+    ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     thread::JoinHandle,
@@ -50,12 +52,18 @@ struct AppServer {
 
 impl AppServer {
     fn spawn(paths: &Paths) -> Result<Self> {
-        let mut command = Command::new("codex");
+        let (executable, child_path) = discover_codex(paths, std::env::var_os("PATH").as_deref())
+            .context("未找到可用的 Codex App Server")?;
+        let mut command = Command::new(executable);
         command
             .args(["app-server", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::null())
+            // npm launchers commonly use `#!/usr/bin/env node`. Preserve the
+            // inherited PATH and append standard install locations so launchd
+            // can resolve both the wrapper and its runtime without a shell.
+            .env("PATH", child_path);
         if paths.isolated {
             command.env("CODEX_HOME", &paths.codex);
         }
@@ -158,6 +166,83 @@ impl AppServer {
         self.send(&Value::Object(request))?;
         wait_for_response(&self.events, id, deadline)
     }
+}
+
+fn codex_search_directories(paths: &Paths, inherited_path: Option<&OsStr>) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = inherited_path
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect();
+    directories.extend([
+        paths.home.join(".local/bin"),
+        paths.codex.join("packages/standalone/current/bin"),
+        paths.home.join(".npm-global/bin"),
+        paths.home.join(".volta/bin"),
+        paths.home.join(".fnm/current/bin"),
+        paths.home.join(".nvm/current/bin"),
+        paths.home.join(".bun/bin"),
+        paths.home.join(".local/share/pnpm"),
+        paths.home.join("Library/pnpm"),
+    ]);
+    #[cfg(unix)]
+    directories.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/local/bin"),
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ]);
+    #[cfg(windows)]
+    directories.push(paths.home.join("AppData/Roaming/npm"));
+
+    let mut seen = HashSet::new();
+    directories.retain(|path| seen.insert(path.clone()));
+    directories
+}
+
+fn executable_names() -> &'static [&'static str] {
+    #[cfg(windows)]
+    {
+        &["codex.exe", "codex.cmd", "codex.bat", "codex"]
+    }
+    #[cfg(not(windows))]
+    {
+        &["codex"]
+    }
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn discover_codex(paths: &Paths, inherited_path: Option<&OsStr>) -> Option<(PathBuf, OsString)> {
+    // All home-relative fallbacks derive from Paths::home. For isolated Paths
+    // this is the caller-provided fixture root; the real user home is never read.
+    let directories = codex_search_directories(paths, inherited_path);
+    let executable = directories.iter().find_map(|directory| {
+        executable_names()
+            .iter()
+            .map(|name| directory.join(name))
+            .find(|candidate| is_executable_file(candidate))
+    })?;
+    let child_path = std::env::join_paths(&directories).ok()?;
+    Some((executable, child_path))
 }
 
 impl Drop for AppServer {
@@ -675,6 +760,16 @@ mod tests {
     use super::*;
     use std::io::{BufRead, Cursor};
 
+    fn write_test_executable(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"test launcher").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+
     fn account() -> AccountIdentity {
         parse_account(
             &json!({"account":{"type":"chatgpt","email":"USER@example.com","planType":"pro"}}),
@@ -691,6 +786,47 @@ mod tests {
         assert!(!first.key.contains("example"));
         assert!(parse_account(&json!({"account":{"type":"apiKey","id":"a"}})).is_err());
         assert!(parse_account(&json!({"account":{"type":"chatgpt"}})).is_err());
+    }
+
+    #[test]
+    fn executable_discovery_prefers_inherited_path_then_isolated_home() {
+        let fixture = tempfile::tempdir().unwrap();
+        let isolated_home = fixture.path().join("isolated-home");
+        let inherited_bin = fixture.path().join("inherited-bin");
+        let paths = Paths::new(Some(isolated_home.clone()), None).unwrap();
+        let inherited_codex = inherited_bin.join(executable_names()[0]);
+        let isolated_codex = isolated_home.join(".local/bin").join(executable_names()[0]);
+        write_test_executable(&inherited_codex);
+        write_test_executable(&isolated_codex);
+
+        let inherited = std::env::join_paths([&inherited_bin]).unwrap();
+        let (found, child_path) = discover_codex(&paths, Some(&inherited)).unwrap();
+        assert_eq!(found, inherited_codex);
+        assert_eq!(
+            std::env::split_paths(&child_path).next(),
+            Some(inherited_bin)
+        );
+
+        let (found, child_path) = discover_codex(&paths, Some(OsStr::new(""))).unwrap();
+        assert_eq!(found, isolated_codex);
+        assert!(
+            std::env::split_paths(&child_path).any(|path| path == isolated_home.join(".local/bin"))
+        );
+    }
+
+    #[test]
+    fn isolated_search_never_adds_the_process_home() {
+        let fixture = tempfile::tempdir().unwrap();
+        let isolated_home = fixture.path().join("isolated-home");
+        let unrelated_home = fixture.path().join("real-home");
+        let paths = Paths::new(Some(isolated_home.clone()), None).unwrap();
+        let directories = codex_search_directories(&paths, None);
+
+        assert!(directories.contains(&isolated_home.join(".local/bin")));
+        assert!(directories.contains(&paths.codex.join("packages/standalone/current/bin")));
+        assert!(!directories
+            .iter()
+            .any(|path| path.starts_with(&unrelated_home)));
     }
 
     #[test]
