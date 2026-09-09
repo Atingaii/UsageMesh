@@ -580,3 +580,43 @@ it("严格清洗外部额度字段、数值和时间", () => {
   ]);
   expect(clean.officialUsage[0].status).toBe("stale");
 });
+
+it("读取失败的近期快照不能显示为当前额度或继续预测", async () => {
+  const { createElement } = await import("react");
+  const { render, screen, cleanup } = await import("@testing-library/react");
+  const { QuotaCycles } = await import("../src/views/QuotaCycles");
+  const { dataset } = await import("./fixtures");
+  const now = Date.now();
+  const at = (offset: number) => new Date(now + offset * 60_000).toISOString();
+  const selected = cycle({
+    nominalStartAt: at(-30),
+    resetsAt: at(30),
+    firstObservedAt: at(-25),
+    lastObservedAt: at(0),
+    lastUsedPercent: 40,
+    samples: Array.from({ length: 6 }, (_, i) => ({
+      at: at(-25 + i * 5),
+      usedPercent: 35 + i,
+    })),
+  });
+  try {
+    render(
+      createElement(QuotaCycles, {
+        dataset: dataset({
+          records: [],
+          officialQuota: quota([], [selected]),
+        }),
+      }),
+    );
+    expect(screen.getByText("快照已过期")).toBeTruthy();
+    expect(screen.queryByText("当前官方快照")).toBeNull();
+    expect(
+      screen.queryByRole("img", {
+        name: "当前周期官方比例、理想节奏和线性预测",
+      }),
+    ).toBeNull();
+    expect(screen.getByText("耗尽预测暂不可用")).toBeTruthy();
+  } finally {
+    cleanup();
+  }
+});

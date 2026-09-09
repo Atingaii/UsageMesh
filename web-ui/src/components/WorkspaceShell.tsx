@@ -44,7 +44,7 @@ export const NAV = [
     label: "周期用量",
     icon: Gauge,
     eyebrow: "OFFICIAL QUOTA CYCLES",
-    description: "按 Codex 官方重置窗口，汇总所有已读取设备的官方订阅用量。",
+    description: "查看官方剩余额度，以及重置周期内的跨设备用量。",
   },
   {
     id: "aggregated",
