@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sanitizeOfficialQuota } from "../src/lib/data";
 import {
   aggregateQuotaCycle,
+  forecastCycleCost,
   cycleBounds,
   mergeOfficialQuotaData,
 } from "../src/lib/quotaCycles";
@@ -619,4 +620,62 @@ it("读取失败的近期快照不能显示为当前额度或继续预测", asyn
   } finally {
     cleanup();
   }
+});
+
+describe("周期总金额预测", () => {
+  const usage = (overrides = {}) =>
+    record({
+      timestampMs: Date.parse(iso(10, 10)),
+      cost: 30,
+      billingChannel: "official-subscription",
+      ...overrides,
+    });
+  it("按时间进度外推金额，排除未来记录，不使用官方额度百分比", () => {
+    const result = aggregateQuotaCycle(
+      [
+        usage(),
+        usage({
+          id: "future",
+          timestampMs: Date.parse(iso(10, 45)),
+          cost: 900,
+        }),
+      ],
+      cycle({ lastUsedPercent: 90 }),
+    );
+    const estimate = forecastCycleCost(
+      result,
+      iso(10, 30),
+      Date.parse(iso(10, 30)),
+    );
+    expect(estimate?.recorded).toBe(30);
+    expect(estimate?.total).toBe(60);
+    expect(estimate?.elapsedFraction).toBe(0.5);
+  });
+  it("使用最后同步时刻，避免离线后金额预测随时间错误下降", () => {
+    const result = aggregateQuotaCycle([usage()], cycle());
+    expect(
+      forecastCycleCost(result, iso(10, 20), Date.parse(iso(10, 40)))?.total,
+    ).toBe(90);
+  });
+  it("历史、空记录及无效时间不伪造金额；部分计价保留提示", () => {
+    const result = aggregateQuotaCycle(
+      [usage({ costLowerBound: true })],
+      cycle(),
+    );
+    expect(
+      forecastCycleCost(result, iso(10, 30), Date.parse(iso(10, 30)))
+        ?.partialPricing,
+    ).toBe(true);
+    expect(forecastCycleCost(result, iso(11), Date.parse(iso(11)))).toBeNull();
+    expect(
+      forecastCycleCost(result, "invalid", Date.parse(iso(10, 30))),
+    ).toBeNull();
+    expect(
+      forecastCycleCost(
+        aggregateQuotaCycle([], cycle()),
+        iso(10, 30),
+        Date.parse(iso(10, 30)),
+      ),
+    ).toBeNull();
+  });
 });

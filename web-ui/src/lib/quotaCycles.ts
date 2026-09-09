@@ -149,6 +149,53 @@ export function aggregateQuotaCycle(
   };
 }
 
+/** Extrapolate recorded API-equivalent cost by elapsed time, never quota percent. */
+export function forecastCycleCost(
+  aggregation: CycleAggregation,
+  syncedAt: string | null,
+  nowMs = Date.now(),
+): {
+  total: number;
+  recorded: number;
+  asOf: number;
+  elapsedFraction: number;
+  partialPricing: boolean;
+} | null {
+  const { from, to } = aggregation.bounds;
+  const syncedMs = time(syncedAt);
+  const asOf = Math.min(nowMs, syncedMs);
+  if (
+    ![from, to, nowMs, asOf].every(Number.isFinite) ||
+    to <= from ||
+    nowMs >= to ||
+    asOf <= from
+  )
+    return null;
+  // Use completed minutes and the ledger's timestamp so an offline device is
+  // not silently treated as having zero spend since its last synchronization.
+  const rows = aggregation.rows.filter(
+    (row) => row.timestampMs + 60_000 <= asOf,
+  );
+  if (
+    !rows.length ||
+    rows.some((row) => !Number.isFinite(row.cost) || row.cost < 0)
+  )
+    return null;
+  const elapsedFraction = (asOf - from) / (to - from);
+  const recorded = rows.reduce((sum, row) => sum + row.cost, 0);
+  const total = recorded / elapsedFraction;
+  if (!Number.isFinite(total)) return null;
+  return {
+    total,
+    recorded,
+    asOf,
+    elapsedFraction,
+    partialPricing: rows.some(
+      (row) => row.costLowerBound || !row.pricingResolved,
+    ),
+  };
+}
+
 function snapshotKey(item: OfficialQuotaSnapshot): string {
   return JSON.stringify([item.accountKey, item.limitId]);
 }

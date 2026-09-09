@@ -9,6 +9,7 @@ import {
 } from "../lib/analytics";
 import {
   aggregateQuotaCycle,
+  forecastCycleCost,
   formatWindowDuration,
   type CycleGroup,
 } from "../lib/quotaCycles";
@@ -590,6 +591,7 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
     0,
     Math.min(100, observedRemainingPercent),
   );
+  const costForecast = forecastCycleCost(result, dataset.lastSync);
   const stats = [
     {
       label: "Tokens",
@@ -600,6 +602,15 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
       label: "请求",
       value: number(result.requests),
       note: "",
+    },
+    {
+      label: "本周期预计总金额",
+      value: costForecast ? `≈ ${money(costForecast.total)}` : "—",
+      note: costForecast
+        ? `API 等价估算，非账单${costForecast.partialPricing ? " · 部分计价" : ""}`
+        : expired
+          ? "周期已结束，不再预测"
+          : "等待本周期有效金额记录",
     },
     {
       label: "参与设备",
@@ -721,6 +732,15 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
               {money(result.cost)}
               。按设备端价卡估算，仅供比较，并非实际支付金额。
             </p>
+            {costForecast && (
+              <p>
+                预计总金额 = 截至 {dateTime(costForecast.asOf)} 已记录的 API
+                等价金额 {money(costForecast.recorded)} ÷ 已过周期比例{" "}
+                {(costForecast.elapsedFraction * 100).toFixed(1)}%。
+                按该平均消耗速度推算至重置时间；不按官方额度百分比换算，
+                也不代表订阅总额度或实际账单。缺失设备和未计价记录可能使估算偏低。
+              </p>
+            )}
             {result.boundaryBuckets > 0 && (
               <p>
                 已排除 {number(result.boundaryBuckets)} 个跨周期边界分钟桶，共{" "}
