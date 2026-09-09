@@ -121,6 +121,68 @@ export interface PricingStatus {
   fallbackRows: number;
 }
 
+export interface OfficialQuotaWindow {
+  name: string;
+  usedPercent: number;
+  remainingPercent: number;
+  resetsAt: string | null;
+  windowMinutes: number | null;
+}
+
+export interface OfficialQuotaSnapshot {
+  provider: "codex";
+  source: "codex-app-server";
+  accountKey: string;
+  account: string;
+  limitId: string;
+  limitName: string;
+  planType: string;
+  updatedAt: string;
+  status: "observed";
+  windows: OfficialQuotaWindow[];
+}
+
+export interface OfficialQuotaSample {
+  at: string;
+  usedPercent: number;
+}
+
+export interface OfficialQuotaCycle {
+  id: string;
+  accountKey: string;
+  account: string;
+  limitId: string;
+  limitName: string;
+  windowName: string;
+  windowMinutes: number | null;
+  resetsAt: string;
+  nominalStartAt: string;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  firstUsedPercent: number;
+  lastUsedPercent: number;
+  samples: OfficialQuotaSample[];
+  closedAt: string | null;
+  closureReason: "reset-adjustment" | "window-changed" | null;
+  segment: number;
+}
+
+export interface OfficialUsageSnapshot {
+  accountKey: string;
+  updatedAt: string;
+  summary: unknown;
+  dailyUsageBuckets: Array<{ startDate: string; tokens: number }> | null;
+  status: "observed" | "stale" | "unavailable";
+  error?: string;
+}
+
+export interface OfficialQuotaData {
+  version: 1;
+  latest: OfficialQuotaSnapshot[];
+  cycles: OfficialQuotaCycle[];
+  officialUsage: OfficialUsageSnapshot[];
+}
+
 export interface DashboardDataset {
   repo: string;
   records: UsageRecord[];
@@ -130,11 +192,13 @@ export interface DashboardDataset {
   lastSync: string;
   warnings: string[];
   expectedDevices: number;
+  officialQuota?: OfficialQuotaData;
 }
 
 export type ActiveTab =
   | "overview"
   | "analytics"
+  | "quota-cycles"
   | "devices"
   | "aggregated"
   | "settings"

@@ -19,12 +19,18 @@ pub fn scan(paths: &Paths) -> Result<Value> {
         scanner_settings: ScannerSettings::default(),
     })
     .map_err(|e| anyhow::anyhow!(e))?;
+    let evidence = if paths.isolated {
+        crate::evidence::EvidenceBundle::default()
+    } else {
+        crate::evidence::scan(false)
+    };
     let prices = PriceBook::load();
     let month = chrono::Local::now().format("%Y-%m").to_string();
     let mut daily: BTreeMap<String, f64> = BTreeMap::new();
     let mut sessions: BTreeMap<String, Value> = BTreeMap::new();
     let mut requests = Vec::new();
     for m in &parsed.messages {
+        let (_, route) = crate::collector::route_for_message(&evidence, m, &m.client, &m.model_id);
         let project = m.workspace_key.as_deref().unwrap_or("unknown");
         let project_id = digest(project.as_bytes());
         let sid = digest(
@@ -78,7 +84,7 @@ pub fn scan(paths: &Paths) -> Result<Value> {
             item["monthCost"] = json!(item["monthCost"].as_f64().unwrap() + metrics.cost_usd);
         }
         *daily.entry(m.date.clone()).or_default() += metrics.cost_usd;
-        requests.push(json!({"sessionId":sid,"projectId":project_id,"at":timestamp,"date":m.date,"client":m.client,"model":m.model_id,"provider":m.provider_id,"tokens":metrics.total_tokens(),"cost":metrics.cost_usd,"requests":metrics.messages,"durationMs":m.duration_ms.filter(|v|*v>=0),"lowerBound":quote.lower_bound}));
+        requests.push(json!({"sessionId":sid,"projectId":project_id,"at":timestamp,"date":m.date,"client":m.client,"model":m.model_id,"provider":m.provider_id,"routeType":route.route_type,"billingChannel":route.billing_channel,"tokens":metrics.total_tokens(),"cost":metrics.cost_usd,"requests":metrics.messages,"durationMs":m.duration_ms.filter(|v|*v>=0),"lowerBound":quote.lower_bound}));
     }
     requests.sort_by_key(|r| r["at"].as_i64());
     let total = requests.len();

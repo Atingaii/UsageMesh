@@ -348,6 +348,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         }
     };
 
+    let pending_upload = config::sync_pending()?;
     let previous = config::read_cached_ledger()?;
     let previous_for_compare = previous.clone();
     let initial_scan = previous.is_none();
@@ -360,13 +361,18 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     let version_migration = previous.as_ref().is_some_and(|ledger| {
         ledger.device.app_version != env!("CARGO_PKG_VERSION")
     });
+    let overlap_start = Local::now().date_naive() - Duration::days(2);
+    let stale_cache = previous.as_ref().is_some_and(|ledger| {
+        chrono::DateTime::parse_from_rfc3339(&ledger.generated_at).map_or(true, |at| at.with_timezone(&Local).date_naive() < overlap_start)
+    });
     let effective_full = full
+        || stale_cache
         || initial_scan
         || pricing_migration
         || schema_migration
         || version_migration;
 
-    let (ledger, mode) = if effective_full {
+    let (mut ledger, mode) = if effective_full {
         let mode = if initial_scan {
             "full/initial"
         } else if version_migration {
@@ -375,6 +381,8 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
             "full/schema-migration"
         } else if pricing_migration {
             "full/pricing-migration"
+        } else if stale_cache {
+            "full/offline-recovery"
         } else {
             "full/manual"
         };
@@ -393,6 +401,17 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         )
     };
 
+    ledger.official_quota = collector::quota_update_for_sync(
+        &previous_for_compare.as_ref().map(|p| p.official_quota.clone()).unwrap_or_default(),
+        local::official_metadata(),
+    );
+    let accounting_unchanged = previous_for_compare
+        .as_ref()
+        .is_some_and(|previous| collector::same_accounting(previous, &ledger));
+    // The marker distinguishes collected local data from successfully published data.
+    if pending_upload || !accounting_unchanged || version_migration || schema_migration || pricing_migration {
+        config::mark_sync_pending()?;
+    }
     config::write_cached_ledger(&ledger)?;
     let github = GithubClient::new(config.repo.clone(), config.github_token.clone())?;
     if full {
@@ -407,10 +426,7 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
         }
     }
 
-    let accounting_unchanged = previous_for_compare
-        .as_ref()
-        .is_some_and(|previous| collector::same_accounting(previous, &ledger));
-    if accounting_unchanged && !version_migration && !schema_migration && !pricing_migration {
+    if accounting_unchanged && !pending_upload && !version_migration && !schema_migration && !pricing_migration {
         // A manual full sync is also the migration/repair path for the static
         // dashboard index. Refresh it even when accounting itself is unchanged.
         if full {
@@ -434,6 +450,8 @@ fn run_sync(full: bool, quiet: bool) -> Result<()> {
     github
         .refresh_dashboard_index()
         .context("failed to refresh the dashboard device index")?;
+    // Clear only after both remote writes succeed; failures remain retryable.
+    config::clear_sync_pending()?;
     publish_presence_if_due(&github, &config, quiet);
     if !quiet {
         println!("Synced {} ({mode})", config.device_name);

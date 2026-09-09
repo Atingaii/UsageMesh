@@ -205,3 +205,11 @@ npm run build
 ## License and attribution
 
 MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Official subscription cycles (v2.7.0+)
+
+The cloud **Cycle usage** view aggregates recognized Codex official-subscription records across loaded devices within an official reset window. Tokens, requests and pricing-card estimates are additive; account quota percentages are the latest snapshot per account and limit, never summed across devices. API billing, relays and unknown channels are excluded. Minute buckets crossing a precise reset boundary are reported separately for review.
+
+The local workspace reads the signed-in `codex app-server` and stores observed cycle history. Sanitized quota metadata is included in encrypted device ledgers; authentication tokens, email addresses and configuration backups are not uploaded. Official daily token totals remain separate because they cannot establish exact within-day cycle usage. One upgraded device can supply cycle windows for existing official-subscription minute records from other devices. See the [local workspace guide](docs/LOCAL-WORKSPACE.md).
+
+Quota forecasts add observed burn rate, exhaustion/reset projections, sustainable pace and trend charts. A separate manually calibrated token-capacity scenario never claims to be an official token limit. See [forecast methodology and references](docs/QUOTA-FORECAST.md).

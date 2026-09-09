@@ -23,3 +23,15 @@ Codex request-level service-tier evidence includes ideas adapted from:
   MIT License, Copyright (c) 2026 falyx6851-byte
 
 Third-party project names remain the property of their respective owners.
+
+Official subscription forecasting and pacing take design inspiration from:
+  durandom/token-burn (forecast observations and linear projection)
+  https://github.com/durandom/token-burn
+  MIT License, Copyright (c) 2026 Michael Hild
+  steipete/CodexBar (quota pacing and burn-down presentation)
+  https://github.com/steipete/CodexBar
+  MIT License, Copyright (c) 2026 Peter Steinberger
+  Maciek-roboblog/Claude-Code-Usage-Monitor (usage-rate presentation)
+  https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor
+  MIT License, Copyright (c) 2025 Maciej
+  See docs/QUOTA-FORECAST.md for scope, sources and limitations.

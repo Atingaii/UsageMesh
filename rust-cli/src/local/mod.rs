@@ -3,6 +3,8 @@ mod alerts;
 mod configure;
 mod network;
 mod quota;
+mod quota_history;
+mod quota_official;
 mod store;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
@@ -19,6 +21,8 @@ struct State {
     settings: Settings,
     activity: Value,
     quotas: Vec<Value>,
+    quota_history: quota_history::History,
+    quota_connection: Value,
     events: Vec<Value>,
     alerts: Vec<Value>,
     active: BTreeMap<String, i64>,
@@ -42,26 +46,50 @@ impl State {
                 )?;
                 self.activity = v;
                 self.scan_error = None;
+                self.refresh_official();
                 self.check();
                 Ok(())
             }
             Err(e) => {
                 self.scan_error = Some("扫描失败，保留上次快照；请检查本地客户端日志权限".into());
+                self.refresh_official();
+                self.check();
                 Err(e)
             }
         }
     }
-    fn check(&mut self) {
-        let codex = quota::codex(&self.paths);
-        if let Some(index) = self
-            .quotas
-            .iter()
-            .position(|q| q["source"] == "local-cli-telemetry")
-        {
-            self.quotas[index] = codex
-        } else {
-            self.quotas.push(codex)
+    fn refresh_official(&mut self) {
+        let attempted = chrono::Utc::now().to_rfc3339();
+        match refresh_official_at(&self.paths) {
+            Ok(history) => {
+                let key = history
+                    .latest
+                    .first()
+                    .and_then(|q| q["accountKey"].as_str())
+                    .map(str::to_string);
+                self.quotas.retain(|q| {
+                    q["source"] != "codex-app-server" && q["source"] != "local-cli-telemetry"
+                });
+                self.quotas.extend(history.latest.iter().cloned());
+                self.quota_connection = json!({"status":"fresh","error":null,"lastAttemptAt":attempted,"lastSuccessAt":history.last_success_at,"accountKey":key});
+                self.quota_history = history;
+            }
+            Err(error) => {
+                self.quotas.retain(|q| q["source"] != "local-cli-telemetry");
+                for q in &mut self.quotas {
+                    if q["source"] == "codex-app-server" {
+                        q["status"] = json!("stale");
+                    }
+                }
+                if self.quota_history.official_usage.is_object() {
+                    self.quota_history.official_usage["status"] = json!("stale");
+                }
+                self.quotas.push(quota::codex(&self.paths));
+                self.quota_connection = json!({"status":if self.quota_history.latest.is_empty(){"unavailable"}else{"stale"},"error":error.to_string(),"lastAttemptAt":attempted,"lastSuccessAt":self.quota_history.last_success_at,"accountKey":null});
+            }
         }
+    }
+    fn check(&mut self) {
         alerts::evaluate(
             &self.activity,
             &self.quotas,
@@ -78,17 +106,38 @@ impl State {
     fn api(&mut self, method: &Method, path: &str, body: Value) -> Result<Value> {
         match (method, path) {
             (&Method::Get, "/api/state") => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"settings":self.settings,"activity":self.activity,"scanError":self.scan_error,"quotas":self.quotas,"events":self.events,"alerts":self.alerts,"tools":configure::inventory(&self.paths),"backups":configure::backups(&self.paths)?,"dataDir":self.paths.data,"platform":std::env::consts::OS}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"settings":self.settings,"activity":self.activity,"scanError":self.scan_error,"quotas":self.quotas,"quotaConnection":self.quota_connection,"quotaHistory":self.quota_history.public_history(),"officialUsage":self.quota_history.official_usage,"events":self.events,"alerts":self.alerts,"tools":configure::inventory(&self.paths),"backups":configure::backups(&self.paths)?,"dataDir":self.paths.data,"platform":std::env::consts::OS}),
             ),
             (&Method::Post, "/api/scan") => {
                 self.scan()?;
                 Ok(json!({"message":"本机扫描已完成"}))
             }
+            (&Method::Post, "/api/quota/official") => {
+                self.refresh_official();
+                self.check();
+                Ok(
+                    json!({"message":if self.quota_connection["status"]=="fresh"{"官方额度已更新"}else{"官方读取未成功，已保留历史并检查本机日志；详见连接状态"}}),
+                )
+            }
+            (&Method::Post, "/api/quota/cycle") => {
+                let id = body["id"].as_str().context("请选择周期")?;
+                let cycle = self
+                    .quota_history
+                    .cycles
+                    .iter()
+                    .find(|c| c.id == id)
+                    .context("周期不存在或已超出保留范围")?;
+                quota_history::details(cycle, &self.activity)
+            }
             (&Method::Post, "/api/quota") => {
                 let provider = body["provider"].as_str().context("需要供应商")?;
                 let q = quota::fetch_codexbar(provider)?;
-                self.quotas
-                    .retain(|r| r["provider"] != provider || r["source"] == "local-cli-telemetry");
+                self.quotas.retain(|r| {
+                    r["provider"] != provider
+                        || !r["source"]
+                            .as_str()
+                            .is_some_and(|s| s.starts_with("codexbar:"))
+                });
                 self.quotas.push(q.clone());
                 self.check();
                 Ok(q)
@@ -250,6 +299,76 @@ impl State {
         }
     }
 }
+fn refresh_official_at(paths: &Paths) -> Result<quota_history::History> {
+    let _lock = quota_history::lock(paths)?;
+    let mut history = quota_history::History::read(paths)?;
+    history.last_attempt_at = Some(chrono::Utc::now().to_rfc3339());
+    for quota in &mut history.latest {
+        quota["status"] = json!("stale");
+    }
+    if history.official_usage.is_object() {
+        history.official_usage["status"] = json!("stale");
+    }
+    history.save(paths)?;
+    let snapshot = quota_official::fetch(paths)?;
+    anyhow::ensure!(
+        snapshot
+            .quotas
+            .iter()
+            .all(|q| q["accountKey"] == snapshot.account_key
+                && q["account"] == snapshot.account_label),
+        "官方账号信息不一致，请重新读取"
+    );
+    history.record(snapshot.quotas, snapshot.usage, chrono::Utc::now());
+    history.save(paths)?;
+    Ok(history)
+}
+fn recent_quota_sample(at: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(at)
+        .ok()
+        .is_some_and(|at| {
+            (0..300).contains(&chrono::Utc::now().signed_duration_since(at).num_seconds())
+        })
+}
+/// Only sanitized quota metadata enters the encrypted usage ledger. Authentication tokens and email addresses never do.
+pub fn official_metadata() -> Value {
+    let Ok(paths) = Paths::new(None, None) else {
+        return Value::Null;
+    };
+    // Resident sync runs more often than quota polling. Failed attempts also cool down;
+    // the pre-request history save marks their previous snapshots as stale.
+    if let Ok(history) = quota_history::History::read(&paths) {
+        if history
+            .last_attempt_at
+            .as_deref()
+            .is_some_and(recent_quota_sample)
+        {
+            return if history.cycles.is_empty() && history.latest.is_empty() {
+                Value::Null
+            } else {
+                history.export()
+            };
+        }
+    }
+    match refresh_official_at(&paths) {
+        Ok(history) => history.export(),
+        Err(_) => {
+            let Ok(mut history) = quota_history::History::read(&paths) else {
+                return Value::Null;
+            };
+            if history.cycles.is_empty() && history.latest.is_empty() {
+                return Value::Null;
+            }
+            for q in &mut history.latest {
+                q["status"] = json!("stale");
+            }
+            if history.official_usage.is_object() {
+                history.official_usage["status"] = json!("stale");
+            }
+            history.export()
+        }
+    }
+}
 fn header<'a>(request: &'a Request, name: &'static str) -> Option<&'a str> {
     request
         .headers()
@@ -279,17 +398,21 @@ pub fn serve(port: u16, open: bool, home: Option<PathBuf>, data: Option<PathBuf>
     let activity = load(&paths.data.join("activity.json"))?;
     let events = load(&paths.data.join("events.json"))?;
     let prior: Value = load(&paths.data.join("alerts.json"))?;
+    let quota_history = quota_history::History::read(&paths)?;
     let mut state = State {
         paths,
         settings,
         activity,
         events,
-        quotas: vec![],
+        quotas: quota_history.latest.clone(),
+        quota_history,
+        quota_connection: Value::Null,
         alerts: serde_json::from_value(prior["history"].clone()).unwrap_or_default(),
         active: serde_json::from_value(prior["active"].clone()).unwrap_or_default(),
         last_scan: Instant::now(),
         scan_error: None,
     };
+    state.refresh_official();
     state.check();
     let server = Server::http((std::net::Ipv4Addr::LOCALHOST, port))
         .map_err(|e| anyhow::anyhow!("无法启动本地服务: {e}"))?;
@@ -320,11 +443,18 @@ pub fn serve(port: u16, open: bool, home: Option<PathBuf>, data: Option<PathBuf>
             continue;
         }
         if request.method() == &Method::Get
-            && matches!(path.as_str(), "/" | "/app.js" | "/style.css" | "/icons.js")
+            && matches!(
+                path.as_str(),
+                "/" | "/app.js" | "/style.css" | "/icons.js" | "/quota-forecast.js"
+            )
         {
             let (body, kind) = match path.as_str() {
                 "/icons.js" => (
                     include_bytes!("../../local-web/icons.js").as_slice(),
+                    "text/javascript; charset=utf-8",
+                ),
+                "/quota-forecast.js" => (
+                    include_bytes!("../../local-web/quota-forecast.js").as_slice(),
                     "text/javascript; charset=utf-8",
                 ),
                 "/app.js" => (
@@ -423,6 +553,20 @@ fn open_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quota_sync_sampling_is_throttled_without_accepting_future_cache() {
+        let now = chrono::Utc::now();
+        assert!(recent_quota_sample(
+            &(now - chrono::Duration::seconds(240)).to_rfc3339()
+        ));
+        assert!(!recent_quota_sample(
+            &(now - chrono::Duration::seconds(301)).to_rfc3339()
+        ));
+        assert!(!recent_quota_sample(
+            &(now + chrono::Duration::seconds(60)).to_rfc3339()
+        ));
+        assert!(!recent_quota_sample("invalid"));
+    }
     #[test]
     fn reject_foreign_origins_and_missing_tokens() {
         assert!(authorized(

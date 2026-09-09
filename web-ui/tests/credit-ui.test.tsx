@@ -48,7 +48,7 @@ describe("紧凑工作区导航", () => {
     render(<Guide onBack={vi.fn()} />);
     const section = document.getElementById("guide-local")!;
     section.scrollIntoView = vi.fn();
-    fireEvent.click(screen.getByRole("link", { name: "4. 本地管理" }));
+    fireEvent.click(screen.getByRole("link", { name: /本地管理$/ }));
     expect(section.scrollIntoView).toHaveBeenCalled();
     expect(location.hash).toBe("#guide");
   });

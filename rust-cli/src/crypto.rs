@@ -182,6 +182,7 @@ mod tests {
 
     fn ledger() -> Ledger {
         Ledger {
+            official_quota: serde_json::Value::Null,
             schema_version: 7,
             generated_at: "2026-08-26T00:00:00Z".into(),
             device: DeviceInfo {

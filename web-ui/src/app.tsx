@@ -45,6 +45,11 @@ const Overview = lazy(() =>
 const Analytics = lazy(() =>
   import("./views/Analytics").then((module) => ({ default: module.Analytics })),
 );
+const QuotaCycles = lazy(() =>
+  import("./views/QuotaCycles").then((module) => ({
+    default: module.QuotaCycles,
+  })),
+);
 const Devices = lazy(() =>
   import("./views/Devices").then((module) => ({ default: module.Devices })),
 );
@@ -342,6 +347,7 @@ function App() {
             {activeTab === "analytics" && (
               <Analytics records={records} requests={requests} />
             )}
+            {activeTab === "quota-cycles" && <QuotaCycles dataset={dataset} />}
             {activeTab === "aggregated" && <UsageTable rows={records} />}
             {activeTab === "devices" && (
               <Devices

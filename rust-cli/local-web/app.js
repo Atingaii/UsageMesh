@@ -1,4 +1,5 @@
 import { icons } from "./icons.js";
+import { forecastQuotaCycle } from "./quota-forecast.js";
 const $ = (s, root = document) => root.querySelector(s);
 const esc = (v) =>
   String(v ?? "").replace(
@@ -30,7 +31,8 @@ try {
 if (location.hash) history.replaceState(null, "", location.pathname);
 let state,
   section = "overview",
-  busy = false;
+  busy = false,
+  officialUsageExpanded = false;
 const sections = {
   overview: ["工作台", "你的 AI 工作，由你掌握。"],
   quota: ["额度中心", "查看来源、有效时间与重置窗口。"],
@@ -60,6 +62,378 @@ function select(label, name, options, value) {
 }
 function note(text) {
   return `<p class="note">${esc(text)}</p>`;
+}
+function percent(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
+}
+function percentText(value) {
+  const n = percent(value);
+  return n == null ? "未知" : `${n.toFixed(1)}%`;
+}
+function durationText(minutes) {
+  const n = Number(minutes);
+  if (!Number.isFinite(n) || n <= 0) return "时长未知";
+  if (n < 60) return `${Math.round(n)} 分钟`;
+  if (n % 1440 === 0) return `${n / 1440} 天`;
+  if (n % 60 === 0) return `${n / 60} 小时`;
+  return `${Math.floor(n / 60)} 小时 ${Math.round(n % 60)} 分钟`;
+}
+function countdown(value) {
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return "重置时间未知";
+  const remaining = then - Date.now();
+  if (remaining <= 0) return "重置时间已过，请刷新";
+  const minutes = Math.ceil(remaining / 60000);
+  if (minutes < 60) return `${minutes} 分钟后重置`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 48) return `${hours} 小时${rest ? ` ${rest} 分钟` : ""}后重置`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天 ${hours % 24} 小时后重置`;
+}
+function accountText(item = {}) {
+  const key = String(item.accountKey || "");
+  const account = String(item.account || (key ? "官方账号" : "账号身份未核实"));
+  const suffix = key.replace(/[^a-zA-Z0-9]/g, "").slice(-6);
+  return suffix ? `${account} · 标识 …${suffix}` : account;
+}
+function quotaConnectionStatus(connection = {}) {
+  if (connection.status !== "fresh") return connection.status || "unavailable";
+  const success = new Date(connection.lastSuccessAt).getTime();
+  const age = Date.now() - success;
+  return Number.isFinite(age) && age >= -2 * 60000 && age <= 15 * 60000
+    ? "fresh"
+    : "stale";
+}
+function quotaConnectionCopy(connection = {}) {
+  const map = {
+    fresh: ["已连接", "fresh"],
+    stale: ["连接已失效", "stale"],
+    unavailable: ["暂时不可用", "unavailable"],
+  };
+  return map[quotaConnectionStatus(connection)] || ["尚未连接", "unavailable"];
+}
+function quotaIsCurrent(quota) {
+  const recorded = new Date(quota.updatedAt).getTime();
+  const age = Date.now() - recorded;
+  if (!Number.isFinite(age) || age > 15 * 60000 || age < -2 * 60000)
+    return false;
+  if (["stale", "unavailable"].includes(quota.status)) return false;
+  return (quota.windows || []).some((window) => {
+    const reset = window.resetsAt && new Date(window.resetsAt).getTime();
+    return (
+      percent(window.usedPercent) != null && (!reset || reset > Date.now())
+    );
+  });
+}
+function cycleReason(cycle) {
+  if (cycle.closureReason === "reset-adjustment") return "重置或额度调整";
+  if (cycle.closureReason === "window-changed") return "额度窗口变化";
+  return cycleEnded(cycle) ? "已结束（最后观测）" : "持续观测中";
+}
+function cycleEndAt(cycle) {
+  const reset = cycle.resetsAt
+    ? new Date(cycle.resetsAt).getTime()
+    : Number.NaN;
+  const closed = cycle.closedAt
+    ? new Date(cycle.closedAt).getTime()
+    : Number.NaN;
+  if (Number.isFinite(reset) && Number.isFinite(closed))
+    return closed < reset ? cycle.closedAt : cycle.resetsAt;
+  if (Number.isFinite(closed)) return cycle.closedAt;
+  return cycle.resetsAt;
+}
+function cycleEnded(cycle) {
+  const end = new Date(cycleEndAt(cycle)).getTime();
+  return Boolean(cycle.closedAt) || (Number.isFinite(end) && end <= Date.now());
+}
+function cycleRange(cycle) {
+  const adjusted = Number(cycle.segment) > 0;
+  const from = adjusted ? cycle.firstObservedAt : cycle.nominalStartAt;
+  return `${adjusted ? "调整后观测范围" : "推算周期范围"}：${date(from)} — ${date(cycleEndAt(cycle))}`;
+}
+function sameInstant(left, right) {
+  const a = new Date(left).getTime();
+  const b = new Date(right).getTime();
+  return Number.isFinite(a) && Number.isFinite(b) && a === b;
+}
+function matchingQuotaCycle(quota, window) {
+  const minutes = Number(window.windowMinutes);
+  if (!Number.isFinite(minutes) || minutes <= 0 || !window.resetsAt)
+    return null;
+  return (
+    (state.quotaHistory?.cycles || []).find(
+      (cycle) =>
+        cycle.closedAt == null &&
+        cycle.accountKey === quota.accountKey &&
+        cycle.limitId === quota.limitId &&
+        cycle.windowName === window.name &&
+        Number(cycle.windowMinutes) === minutes &&
+        sameInstant(cycle.resetsAt, window.resetsAt),
+    ) || null
+  );
+}
+function forecastState(forecast) {
+  if (forecast?.reason === "stale-snapshot") return ["样本已过期", "stale"];
+  const states = {
+    ready: ["预测可参考", "fresh"],
+    partial: ["早期估计", "stale"],
+    insufficient: ["样本不足", "stale"],
+    expired: ["周期已结束", "stale"],
+    invalid: ["数据无效", "unavailable"],
+  };
+  return states[forecast?.state] || ["样本不足", "stale"];
+}
+function forecastReason(forecast) {
+  if (forecast?.reason === "stale-snapshot")
+    return "最新观测已超过 15 分钟，不提供当前耗尽时间。";
+  if (
+    forecast?.series?.length &&
+    forecast.series.every((point) => point.usedPercent === 0)
+  )
+    return "已同步，但尚无非零消耗观测。";
+  const reasons = {
+    "no-samples": "当前周期还没有可用观测点。",
+    "one-sample": "至少需要两个不同时间的观测点才能计算速度。",
+    "zero-span": "观测点时间跨度不足，暂时无法计算速度。",
+    "early-window": "周期仍处于早期，预测会随新观测明显变化。",
+    "flat-usage": "已同步，但尚无非零消耗观测。",
+    "invalid-window": "窗口时长或周期边界无效，无法预测。",
+    "short-span": "有效观测不足 10 分钟，先作为早期估计。",
+    "insufficient-change": "观测到的变化小于 1 个百分点，趋势仍不稳定。",
+    "rapid-jump": "近期突增，趋势评分已降低。",
+    "low-confidence": "近期变化与线性趋势拟合度较低，趋势评分较低。",
+  };
+  return (
+    reasons[forecast?.reason] ||
+    "预测仅基于已观测的额度百分比，不代表官方承诺。"
+  );
+}
+function paceExplanation(forecast) {
+  const expected = forecast?.pace?.expectedUsedPercent;
+  const delta = forecast?.pace?.deltaPercent;
+  if (
+    typeof expected !== "number" ||
+    !Number.isFinite(expected) ||
+    typeof delta !== "number" ||
+    !Number.isFinite(delta)
+  )
+    return "";
+  const stages = {
+    "far-below": "明显低于均匀消耗参考",
+    below: "低于均匀消耗参考",
+    "on-track": "接近均匀消耗参考",
+    above: "高于均匀消耗参考",
+    "far-above": "明显高于均匀消耗参考",
+  };
+  return `按周期进度的均匀参考值为 ${expected.toFixed(1)}%，当前${stages[forecast.pace.stage] || "与参考进度存在差异"}（${delta >= 0 ? "+" : ""}${delta.toFixed(1)} 个百分点）。`;
+}
+function rateText(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "暂不可用";
+  const digits = Math.abs(value) < 0.01 && value !== 0 ? 3 : 2;
+  return `${value.toFixed(digits)} 个百分点/小时`;
+}
+function projectedPercentText(forecast) {
+  if (forecast?.state === "expired") return "周期已结束";
+  const value = forecast?.projection?.usedPercentAtReset;
+  if (typeof value !== "number" || !Number.isFinite(value)) return "暂不预测";
+  if (forecast.projection.exhaustsBeforeReset)
+    return `${value.toFixed(1)}%（按此速度将先耗尽）`;
+  return `${Math.max(0, Math.min(100, value)).toFixed(1)}%`;
+}
+function exhaustionText(forecast) {
+  const projection = forecast?.projection || {};
+  if (forecast?.state === "expired") return "周期已结束，不再提供 ETA";
+  if (forecast?.latest?.isStale) return "样本已过期，暂停 ETA";
+  if (!projection.exhaustsBeforeReset) {
+    return projection.usedPercentAtReset == null
+      ? "暂不预测"
+      : "预计不会在本周期重置前耗尽";
+  }
+  return date(projection.reaches100AtMs);
+}
+function trendPath(points, width = 520, height = 160) {
+  const padX = 18;
+  const padY = 14;
+  const innerWidth = width - padX * 2;
+  const innerHeight = height - padY * 2;
+  const path = points
+    .map((point, index) => {
+      const x = padX + point.progress * innerWidth;
+      const y = padY + (1 - point.usedPercent / 100) * innerHeight;
+      return `${index ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+  if (points.length !== 1) return path;
+  const x = padX + points[0].progress * innerWidth + 0.01;
+  const y = padY + (1 - points[0].usedPercent / 100) * innerHeight;
+  return `${path} L${x.toFixed(2)} ${y.toFixed(2)}`;
+}
+function quotaTrendSvg(forecast) {
+  const series = (forecast?.series || []).filter(
+    (point) =>
+      point &&
+      typeof point.progress === "number" &&
+      Number.isFinite(point.progress) &&
+      point.progress >= 0 &&
+      point.progress <= 1 &&
+      typeof point.usedPercent === "number" &&
+      Number.isFinite(point.usedPercent) &&
+      point.usedPercent >= 0 &&
+      point.usedPercent <= 100,
+  );
+  if (!series.length)
+    return empty(
+      "趋势样本不足",
+      "已同步当前周期，但尚无可绘制的非零消耗观测。",
+    );
+  const observed = trendPath(series);
+  const latest = series.at(-1);
+  const projected = forecast?.projection?.usedPercentAtReset;
+  const canProject =
+    ["ready", "partial"].includes(forecast?.state) &&
+    !forecast.latest?.isStale &&
+    typeof projected === "number" &&
+    Number.isFinite(projected) &&
+    latest.progress < 1;
+  let projection = "";
+  if (canProject) {
+    let endProgress = 1;
+    let endPercent = Math.max(0, Math.min(100, projected));
+    if (projected > 100 && projected > latest.usedPercent) {
+      const fraction = Math.max(
+        0,
+        Math.min(
+          1,
+          (100 - latest.usedPercent) / (projected - latest.usedPercent),
+        ),
+      );
+      endProgress = latest.progress + (1 - latest.progress) * fraction;
+      endPercent = 100;
+    }
+    projection = trendPath([
+      latest,
+      { progress: endProgress, usedPercent: endPercent },
+    ]);
+  }
+  return `<div class="quota-trend"><svg viewBox="0 0 520 160" width="100%" height="180" role="img" aria-label="额度周期已用百分比趋势"><path d="M18 146 L502 14" fill="none" stroke="#b7b3c7" stroke-width="1.5" stroke-dasharray="4 5"></path><path d="${observed}" fill="none" stroke="#6554f0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>${projection ? `<path d="${projection}" fill="none" stroke="#9b59d0" stroke-width="2" stroke-dasharray="7 6" stroke-linecap="round"></path>` : ""}</svg><div class="trend-legend"><span>实线：实际观测</span><span>细虚线：均匀消耗参考</span>${projection ? "<span>紫色虚线：线性预测</span>" : ""}</div></div>`;
+}
+function forecastMetricsHtml(forecast) {
+  const [label, statusClass] = forecastState(forecast);
+  const trendScore =
+    forecast?.stableSampleCount >= 2 &&
+    typeof forecast?.recent?.confidence === "number" &&
+    Number.isFinite(forecast.recent.confidence)
+      ? `${Math.round(forecast.recent.confidence * 100)}/100`
+      : "未知";
+  const speedRatio = forecast?.projection?.speedRatio;
+  const comparison =
+    typeof speedRatio === "number" && Number.isFinite(speedRatio)
+      ? `当前速度约为可持续速度的 ${speedRatio.toFixed(2)} 倍。`
+      : "";
+  const sustainable =
+    forecast?.state === "expired"
+      ? "周期已结束"
+      : rateText(forecast?.projection?.sustainableRatePercentPerHour);
+  const capNote = forecast?.projection?.exhaustsBeforeReset
+    ? "重置时预计值可超过 100% 以保留消耗节奏信息，实际额度仍以 100% 封顶。"
+    : "";
+  return `<section class="quota-forecast"><div class="card-head"><div><p class="quota-provider">OBSERVED FORECAST</p><h3>本周期趋势预测</h3></div><span class="badge quota-status ${statusClass}">${label}</span></div><div class="forecast-metrics"><div><span>近段消耗速度</span><strong>${rateText(forecast?.recent?.ratePercentPerHour)}</strong></div><div><span>预计重置时已用</span><strong>${projectedPercentText(forecast)}</strong></div><div><span>预计耗尽时间</span><strong>${exhaustionText(forecast)}</strong></div><div><span>可持续消耗速度</span><strong>${sustainable}</strong></div></div><p class="small">${esc(forecastReason(forecast))} 趋势评分 ${trendScore}（依据样本覆盖与拟合，不是准确率）。${esc(paceExplanation(forecast))} ${esc(comparison)} ${esc(capNote)}</p>${note("预测只使用当前账号、额度类别、窗口时长和重置时间完全一致的观测周期；跨设备完整趋势请查看云端“周期用量”。")}</section>`;
+}
+function currentWindowForecastHtml(quota, window) {
+  const cycle = matchingQuotaCycle(quota, window);
+  if (!cycle)
+    return `<section class="quota-forecast">${percent(window.usedPercent) === 0 ? empty("已同步，尚无非零消耗观测", "当前窗口仍为 0%，有新的非零观测后再计算趋势。跨设备趋势请查看云端“周期用量”。") : empty("样本不足", "尚无与当前账号、额度类别、窗口时长和重置时间完全一致的开放周期。跨设备趋势请查看云端“周期用量”。")}</section>`;
+  return forecastMetricsHtml(forecastQuotaCycle(cycle));
+}
+function isOfficialQuota(quota) {
+  const connection = state.quotaConnection || {};
+  const source = String(quota.source || "").toLowerCase();
+  return (
+    (connection.accountKey && connection.accountKey === quota.accountKey) ||
+    source === "codex-app-server" ||
+    source.includes("official") ||
+    source.includes("官方")
+  );
+}
+function quotaWindowHtml(window, current, quota) {
+  const used = percent(window.usedPercent);
+  const remaining = percent(window.remainingPercent);
+  const reset = window.resetsAt && new Date(window.resetsAt).getTime();
+  const live = current && (!reset || reset > Date.now());
+  return `<div class="quota-window ${live ? "" : "quota-window-history"}"><div class="quota-window-title"><div><strong>${esc(window.name || "未命名窗口")}</strong><span>${esc(durationText(window.windowMinutes))}</span></div><span class="quota-window-state">${live ? "当前观测" : "最后观测"}</span></div><div class="quota-numbers"><div><strong>${percentText(used)}</strong><span>${live ? "已用" : "最后观测已用"}</span></div><div><strong>${percentText(remaining)}</strong><span>${live ? "剩余" : "最后观测剩余"}</span></div></div>${used == null ? "" : `<progress max="100" value="${used}" aria-label="${esc(window.name || "额度窗口")} 已用百分比"></progress>`}<p class="small quota-reset"><span>${esc(countdown(window.resetsAt))}</span><span>${window.resetsAt ? date(window.resetsAt) : "未提供重置时间"}</span></p>${live ? currentWindowForecastHtml(quota, window) : ""}</div>`;
+}
+function quotaCard(quota) {
+  const official = isOfficialQuota(quota);
+  const current =
+    official &&
+    quotaConnectionStatus(state.quotaConnection) === "fresh" &&
+    quotaIsCurrent(quota);
+  const snapshotLabel = String(quota.source || "").startsWith("codexbar:")
+    ? "附加来源"
+    : official
+      ? "旧快照"
+      : "回退快照";
+  const title =
+    quota.limitName || quota.limitId || quota.provider || "额度窗口";
+  return `<article class="card quota-card ${current ? "" : "quota-card-history"}"><div class="card-head"><div><p class="quota-provider">${esc(quota.provider || "Codex")}</p><h2>${esc(title)}</h2></div><span class="badge quota-status ${current ? "fresh" : "stale"}">${current ? "当前额度" : snapshotLabel}</span></div><p class="quota-account">${esc(accountText(quota))}</p><div class="quota-meta"><span>${esc(quota.source || "来源未知")}</span>${quota.planType ? `<span>${esc(quota.planType)}</span>` : ""}${quota.limitId && quota.limitName ? `<span>额度类别 ${esc(quota.limitId)}</span>` : ""}</div>${(quota.windows || []).map((window) => quotaWindowHtml(window, current, quota)).join("") || empty("暂时没有窗口记录", "刷新官方额度，或稍后再次扫描本机。")}<p class="small quota-recorded">记录时间：${date(quota.updatedAt)}</p>${quota.note ? note(quota.note) : ""}</article>`;
+}
+function officialUsageHtml() {
+  const usage = state.officialUsage;
+  if (!usage)
+    return `<section class="card quota-section"><div class="card-head"><div><p class="quota-provider">OFFICIAL USAGE</p><h2>官方每日 Tokens</h2></div></div>${empty("尚未读取官方每日用量", "登录 Codex 后刷新官方额度。每日数据不会按额度周期裁切，也不会把缺失日期填为 0。")}</section>`;
+  const matchedQuota = (state.quotas || []).find(
+    (quota) => quota.accountKey && quota.accountKey === usage.accountKey,
+  );
+  const usageAccount = {
+    ...usage,
+    account: matchedQuota?.account || usage.account || undefined,
+  };
+  const buckets = Array.isArray(usage.dailyUsageBuckets)
+    ? usage.dailyUsageBuckets.filter(
+        (bucket) =>
+          bucket &&
+          bucket.startDate &&
+          typeof bucket.tokens === "number" &&
+          Number.isFinite(bucket.tokens),
+      )
+    : null;
+  const rows = buckets
+    ? [...buckets].sort((a, b) =>
+        String(a.startDate).localeCompare(String(b.startDate)),
+      )
+    : [];
+  const shown = officialUsageExpanded ? rows : rows.slice(-14);
+  const updated = new Date(usage.updatedAt).getTime();
+  const age = Date.now() - updated;
+  const fresh =
+    usage.status === "observed" &&
+    quotaConnectionStatus(state.quotaConnection) === "fresh" &&
+    Number.isFinite(age) &&
+    age >= -2 * 60000 &&
+    age <= 15 * 60000;
+  const unavailable = usage.status === "unavailable" && !rows.length;
+  const usageClass = fresh ? "fresh" : unavailable ? "unavailable" : "stale";
+  const usageLabel = fresh ? "已观测" : unavailable ? "不可用" : "历史观测";
+  return `<section class="card quota-section"><div class="card-head"><div><p class="quota-provider">OFFICIAL USAGE</p><h2>官方每日 Tokens</h2></div><span class="badge quota-status ${usageClass}">${usageLabel}</span></div><p class="small">${esc(accountText(usageAccount))} · 记录时间 ${date(usage.updatedAt)}</p><p class="quota-boundary">${fresh ? "按官方返回的日期独立展示" : "以下为已保留的官方历史观测"}；不按额度周期裁切，不补齐缺失日期，也不推断所属额度类别。</p>${usage.error ? `<p class="notice error">${esc(usage.error)}</p>` : ""}${rows.length ? `<div class="official-days" role="list">${shown.map((bucket) => `<div role="listitem"><time datetime="${esc(bucket.startDate)}">${esc(bucket.startDate)}</time><strong>${num(bucket.tokens)} <span>Tokens</span></strong></div>`).join("")}</div>${rows.length > 14 ? button(officialUsageExpanded ? "收起到最近 14 条" : `展开全部 ${rows.length} 条`, "official-usage-toggle") : ""}` : empty("官方未返回每日 Tokens", "此处保持缺失状态，不会将未知日期显示为 0。")}${usage.summary == null ? "" : `<details><summary>查看官方摘要</summary><pre>${typeof usage.summary === "string" ? esc(usage.summary) : json(usage.summary)}</pre></details>`}</section>`;
+}
+function quotaHistoryHtml() {
+  const cycles = (state.quotaHistory?.cycles || [])
+    .slice(0, 200)
+    .map((cycle) => ({ ...cycle, resetsAt: cycleEndAt(cycle) }));
+  if (!cycles.length) {
+    const officialWindows = (state.quotas || [])
+      .filter(isOfficialQuota)
+      .flatMap((quota) => quota.windows || []);
+    const syncedZero =
+      quotaConnectionStatus(state.quotaConnection) === "fresh" &&
+      officialWindows.length > 0 &&
+      officialWindows.every((window) => percent(window.usedPercent) === 0);
+    return `<section class="card quota-section"><div class="card-head"><div><p class="quota-provider">OBSERVED CYCLES</p><h2>周期历史</h2></div></div>${empty(syncedZero ? "已同步，尚无非零消耗观测" : "尚无周期历史", syncedZero ? "当前官方窗口仍为 0%，后续出现非零观测后会形成可分析的趋势。" : "刷新官方额度后，UsageMesh 会按账号、额度类别和窗口分别保留观测周期。")}${note("周期边界由重置时间与窗口时长推算，并非核实的实际重置时刻。跨设备聚合请查看云端“周期用量”。")}</section>`;
+  }
+  return `<section class="card quota-section"><div class="card-head"><div><p class="quota-provider">OBSERVED CYCLES</p><h2>周期历史</h2></div><span class="small">最近 ${num(cycles.length)} 个周期</span></div><p class="quota-boundary">分别按账号、额度类别和窗口保存。百分比不能跨窗口相加；已结束周期仅展示最后一次实际观测，不补成 100% 或 0%。</p><label class="cycle-picker">选择周期并读取同期本机明细<select id="quota-cycle-select"><option value="">请选择账号 / 额度类别 / 窗口</option>${cycles.map((cycle) => `<option value="${esc(cycle.id)}">${esc(`${accountText(cycle)} · ${cycle.limitName || cycle.limitId || "额度类别"} · ${cycle.windowName || "窗口"} · ${percentText(cycle.lastUsedPercent)}`)}</option>`).join("")}</select></label><div class="table-wrap cycle-table"><table><thead><tr><th>账号 / 额度类别</th><th>窗口</th><th>观测范围</th><th>最后观测</th><th>状态</th><th></th></tr></thead><tbody>${cycles.map((cycle) => `<tr><td><strong>${esc(accountText(cycle))}</strong><div class="small">${esc(cycle.limitName || cycle.limitId || "额度类别未命名")}${cycle.limitId && cycle.limitName ? ` · ${esc(cycle.limitId)}` : ""}</div></td><td>${esc(cycle.windowName || "未命名窗口")}<div class="small">${esc(durationText(cycle.windowMinutes))}</div></td><td>${date(Number(cycle.segment) > 0 ? cycle.firstObservedAt : cycle.nominalStartAt)}<div class="small">至 ${date(cycle.resetsAt)}${Number(cycle.segment) > 0 ? " · 重置或额度调整后" : " · 推算边界"}</div></td><td><strong>${percentText(cycle.lastUsedPercent)}</strong><div class="small">${date(cycle.lastObservedAt)}</div></td><td>${esc(cycleReason(cycle))}</td><td>${button("查看同期记录", "quota-cycle", cycle.id)}</td></tr>`).join("")}</tbody></table></div>${note("周期起点由重置时间减去窗口时长推算，并非核实的实际重置时刻。出现百分比下降或提前重置时，记录为“重置或额度调整”。跨设备聚合请查看云端“周期用量”。")}</section>`;
 }
 function toast(message, error = false) {
   const el = $("#status");
@@ -131,7 +505,7 @@ function render() {
       )
       .join(
         "",
-      )}</nav><div class="sidebar-foot"><span class="live">仅本机访问</span><small>v${esc(state.version)} · ${esc(state.platform)}</small>${button("锁定页面", "lock")}</div></aside><main><div class="local-toolbar"><label class="nav-search">${icons.search}<input id="nav-search" type="search" aria-label="搜索功能" placeholder="搜索功能"></label><div class="actions">${button("提醒", "navigate", "notifications")}${button("外观", "theme")}</div></div><header ${section === "guide" ? 'class="local-guide-header"' : ""}><div><p class="eyebrow">YOUR USAGE. YOUR WORKSPACE.</p><h1>${title}</h1><p>${subtitle}</p></div><div class="actions">${button("刷新数据", "refresh")}${button("扫描本机", "scan", "", 'class="primary"')}</div></header><div id="status" role="status" aria-live="polite"></div>${state.scanError ? `<p class="notice error">${esc(state.scanError)}</p>` : ""}<section id="content">${views[section]()}</section><footer><span>本地数据不会同步到云端面板 · ${state.activity?.updatedAt ? "上次扫描 " + date(state.activity.updatedAt) : "尚未扫描"}</span><div class="actions">${button("切换主题", "theme")}${button(document.documentElement.classList.contains("large") ? "标准字号" : "大字号", "font")}</div></footer></main><dialog id="dialog" aria-labelledby="dialog-title"></dialog>`;
+      )}</nav><div class="sidebar-foot"><span class="live">仅本机访问</span><small>v${esc(state.version)} · ${esc(state.platform)}</small>${button("锁定页面", "lock")}</div></aside><main><div class="local-toolbar"><label class="nav-search">${icons.search}<input id="nav-search" type="search" aria-label="搜索功能" placeholder="搜索功能"></label><div class="actions">${button("提醒", "navigate", "notifications")}${button("外观", "theme")}</div></div><header ${section === "guide" ? 'class="local-guide-header"' : ""}><div><p class="eyebrow">YOUR USAGE. YOUR WORKSPACE.</p><h1>${title}</h1><p>${subtitle}</p></div><div class="actions">${button("刷新数据", "refresh")}${button("扫描本机", "scan", "", 'class="primary"')}</div></header><div id="status" role="status" aria-live="polite"></div>${state.scanError ? `<p class="notice error">${esc(state.scanError)}</p>` : ""}<section id="content">${views[section]()}</section><footer><span>配置与密钥仅保留本机 · 官方周期随加密账本同步 · ${state.activity?.updatedAt ? "上次扫描 " + date(state.activity.updatedAt) : "尚未扫描"}</span><div class="actions">${button("切换主题", "theme")}${button(document.documentElement.classList.contains("large") ? "标准字号" : "大字号", "font")}</div></footer></main><dialog id="dialog" aria-labelledby="dialog-title"></dialog>`;
 }
 const sessions = () => state.activity?.sessions || [];
 const projectName = (id) =>
@@ -182,7 +556,7 @@ const views = {
             `<div class="recent-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.tool)} · ${esc(p.model)}</small></div></div>`,
         )
         .join("") || empty("尚未保存方案", "新增方案后可预览、应用和回滚。")
-    }${button("管理方案", "navigate", "providers")}</article><article class="card"><h2>运行状态</h2><dl><dt>自动扫描</dt><dd>每 ${state.settings.preferences.scanMinutes} 分钟</dd><dt>系统通知</dt><dd>${state.settings.preferences.notifications ? "已启用" : "未启用"}</dd><dt>数据目录</dt><dd class="path">${esc(state.dataDir)}</dd></dl>${note("关闭浏览器后服务仍运行；终止 serve 后，扫描和通知停止。")}${button("提醒设置", "navigate", "notifications")}</article></div>${note(state.activity?.note || "项目、配置与密钥保存在本机，不上传云端面板。")}`;
+    }${button("管理方案", "navigate", "providers")}</article><article class="card"><h2>运行状态</h2><dl><dt>自动扫描</dt><dd>每 ${state.settings.preferences.scanMinutes} 分钟</dd><dt>系统通知</dt><dd>${state.settings.preferences.notifications ? "已启用" : "未启用"}</dd><dt>数据目录</dt><dd class="path">${esc(state.dataDir)}</dd></dl>${note("关闭浏览器后服务仍运行；终止 serve 后，扫描和通知停止。")}${button("提醒设置", "navigate", "notifications")}</article></div>${note(state.activity?.note || "配置与密钥仅保留本机；官方周期随加密账本同步。")}`;
   },
   guide() {
     const chapters = [
@@ -194,7 +568,7 @@ const views = {
       [
         "quota",
         "额度来源",
-        "Codex 额度来自本机日志中的供应商快照。可选 CodexBar 连接器需单独安装与授权。记录过期或窗口重置后，请重新读取，不要将历史比例当成当前余额。",
+        "登录 Codex 后可手动刷新官方实时额度；UsageMesh 不会自动发起登录。当前额度按账号、额度类别和动态窗口分别显示，过期记录只作为旧快照。周期明细中的 Tokens 是同期本机官方订阅记录，无法归属到某个账号或额度类别；跨设备聚合请查看云端“周期用量”。CodexBar 仍是可选附加来源。",
       ],
       [
         "projects",
@@ -220,30 +594,19 @@ const views = {
     return `<article class="guide-page"><h2>本地工作台使用指南</h2><p class="guide-meta">${chapters.length} 个章节 · UsageMesh ${esc(state.version)}</p><p class="guide-intro">从查看本机用量，到管理供应商配置，了解每项功能的操作方式与数据边界。</p><div class="guide-layout"><nav aria-label="指南目录"><strong>目录</strong>${chapters.map(([id, title], i) => `<a href="#chapter-${id}" data-action="chapter" data-id="${id}">${i + 1}. ${title}</a>`).join("")}</nav><div>${chapters.map(([id, title, body], i) => `<section id="chapter-${id}"><h3><span>${i + 1}</span>${title}</h3><div class="guide-copy"><p>${body}</p>${id === "start" ? "<pre>usagemesh serve</pre>" : ""}</div></section>`).join("")}</div></div></article>`;
   },
   quota() {
-    return `<div class="card"><h2>连接额度来源</h2><p>Codex 本机额度快照随扫描更新。已安装并配置 CodexBar 时，可以手动读取以下额度；未授权时会显示具体错误。</p><div class="actions">${["codex", "claude", "gemini"].map((p) => button("读取 " + p, "quota", p)).join("")}</div>${note("额度来自源记录，不能从 Token 数推算订阅余额。读取 CodexBar 最多等待 25 秒。")}</div><div class="grid two">${
-      state.quotas.length
-        ? state.quotas
-            .map((q) => {
-              let age = Date.now() - new Date(q.updatedAt).getTime();
-              let stale =
-                !Number.isFinite(age) || age > 900000 || age < -120000;
-              return `<article class="card"><div class="card-head"><h2>${esc(q.provider)}</h2><span class="badge">${stale ? "待更新快照" : "近期快照"}</span></div><p class="small">${esc(q.source)} · ${esc(q.account || "账号身份未核实")}</p>${
-                (q.windows || [])
-                  .map((w) => {
-                    const expired =
-                      w.resetsAt && new Date(w.resetsAt).getTime() < Date.now();
-                    return `<div class="quota-window"><div class="card-head"><strong>${esc(w.name)}</strong><span>${stale || expired ? "历史剩余" : "观测剩余"} ${Number(w.remainingPercent).toFixed(1)}%</span></div><progress max="100" value="${Number(w.usedPercent)}" aria-label="${esc(w.name)} 已用百分比"></progress><p class="small">重置时间：${date(w.resetsAt)}${expired ? " · 窗口已过期，请刷新" : ""}</p></div>`;
-                  })
-                  .join("") ||
-                empty(
-                  "暂时没有额度记录",
-                  "先在对应 CLI 中使用一次，再扫描；或连接 CodexBar。",
-                )
-              }<p class="small">记录时间：${date(q.updatedAt)}</p>${note(q.note || "")}</article>`;
-            })
-            .join("")
-        : empty("尚未读取额度", "扫描本机，或连接已配置的 CodexBar。")
-    }</div>`;
+    const connection = state.quotaConnection || {};
+    const [connectionLabel, connectionClass] = quotaConnectionCopy(connection);
+    const connectionStatus = quotaConnectionStatus(connection);
+    const quotas = state.quotas || [];
+    const current = quotas.filter(
+      (quota) =>
+        connectionStatus === "fresh" &&
+        isOfficialQuota(quota) &&
+        quotaIsCurrent(quota),
+    );
+    const snapshots = quotas.filter((quota) => !current.includes(quota));
+    const fallback = connectionStatus !== "fresh";
+    return `<section class="card quota-connection ${connectionClass}"><div><div class="card-head"><div><p class="quota-provider">CODEX OFFICIAL</p><h2>官方实时额度</h2></div><span class="badge quota-status ${connectionClass}">${connectionLabel}</span></div><p>${connectionStatus === "fresh" ? "官方额度连接有效。刷新会读取当前登录账号的最新额度和官方每日 Tokens。" : "官方实时额度当前不可用。下方已采集的本机日志或 CodexBar 快照仍可查看，但旧记录不会作为当前额度。"}</p><div class="quota-meta"><span>最近尝试 ${date(connection.lastAttemptAt)}</span><span>最近成功 ${date(connection.lastSuccessAt)}</span>${connection.accountKey ? `<span>${esc(accountText({ account: "当前账号", accountKey: connection.accountKey }))}</span>` : ""}</div>${connection.error ? `<p class="notice error">${esc(connection.error)}</p>` : ""}${fallback ? `<p class="quota-boundary">请先在终端运行 <code>codex login</code>，再点击刷新。UsageMesh 不会自动登录；失效期间仅回退展示带来源与记录时间的本机快照。</p>` : ""}</div><div class="quota-actions">${button("刷新官方额度", "quota-official", "", 'class="primary"')}</div></section><section class="quota-current"><div class="section-heading"><div><h2>当前额度</h2><p>每个账号、额度类别和窗口独立显示；百分比不能相加。</p></div></div><div class="grid two">${current.length ? current.map(quotaCard).join("") : empty("没有有效的当前额度", "登录 Codex 后刷新官方额度。旧快照会保留在下方，避免被误认为当前值。")}</div></section>${officialUsageHtml()}${quotaHistoryHtml()}<section class="quota-snapshots"><div class="section-heading"><div><h2>旧快照与附加来源</h2><p>保留原始来源和记录时间，仅供追溯。</p></div><div class="actions">${["codex", "claude", "gemini"].map((provider) => button("读取 " + provider, "quota", provider)).join("")}</div></div><div class="grid two">${snapshots.length ? snapshots.map(quotaCard).join("") : empty("暂无旧快照", "CodexBar 是可选附加来源，读取最多等待 25 秒。")}</div>${note("额度百分比以来源记录为准，不能从 Token 数推算订阅余额。过期窗口和失败连接不会升级为当前值。")}</section>`;
   },
   projects() {
     return `<div class="card"><div class="card-head"><h2>项目账本</h2>${button("导出会话 CSV", "export-sessions")}</div><label>搜索项目、标签或客户端<input id="project-search" type="search" placeholder="搜索本机记录"></label><div id="projects-table">${projectTable("")}</div></div>${note(state.activity?.note || "请先扫描本机。")}`;
@@ -434,6 +797,11 @@ async function act(action, id) {
     render();
     return;
   }
+  if (action === "official-usage-toggle") {
+    officialUsageExpanded = !officialUsageExpanded;
+    render();
+    return;
+  }
   if (action === "new-provider") return providerForm();
   if (action === "edit-provider")
     return providerForm(state.settings.providers.find((p) => p.id === id));
@@ -469,6 +837,18 @@ async function act(action, id) {
     return modal(
       "会话请求明细",
       `${note("只展示本次保留的请求记录；消息可能由来源聚合，耗时未知时不估算。")}<div class="table-wrap"><table><thead><tr><th>时间</th><th>模型 / 渠道</th><th>Token</th><th>估算费用</th><th>源耗时</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${date(r.at)}</td><td>${esc(r.model)}<div class="small">${esc(r.provider || "未知")}</div></td><td>${num(r.tokens)}</td><td>${r.lowerBound ? "≥ " : ""}${money(r.cost)}</td><td>${r.durationMs == null ? "未知" : num(r.durationMs) + " ms"}</td></tr>`).join("")}</tbody></table></div>`,
+    );
+  }
+  if (action === "quota-cycle") {
+    const data = await api("quota/cycle", { id });
+    const rawCycle = data.cycle || {};
+    const forecast = forecastQuotaCycle(rawCycle);
+    const cycle = { ...rawCycle, resetsAt: cycleEndAt(rawCycle) };
+    const local = data.local || {};
+    const models = Array.isArray(local.models) ? local.models : [];
+    return modal(
+      `${cycle.windowName || "额度窗口"} · 周期明细`,
+      `<div class="cycle-detail-head"><div><p class="quota-provider">${esc(cycle.limitName || cycle.limitId || "额度类别")}</p><h3>${esc(accountText(cycle))}</h3></div><span class="badge quota-status ${cycleEnded(cycle) ? "stale" : "fresh"}">${esc(cycleReason(cycle))}</span></div><dl class="cycle-facts"><dt>最后观测已用</dt><dd>${percentText(cycle.lastUsedPercent)} · ${date(cycle.lastObservedAt)}</dd><dt>${Number(cycle.segment) > 0 ? "调整后观测范围" : "推算周期范围"}</dt><dd>${date(Number(cycle.segment) > 0 ? cycle.firstObservedAt : cycle.nominalStartAt)} — ${date(cycle.resetsAt)}</dd><dt>窗口时长</dt><dd>${esc(durationText(cycle.windowMinutes))}</dd></dl><p class="quota-boundary">${esc(cycleRange(cycle))}。${Number(cycle.segment) > 0 ? "此段始于一次百分比下降或窗口提前变化，统一标记为“重置或额度调整”。" : "周期起点由重置时间减去窗口时长推算，并非核实的实际重置时刻。"}</p>${quotaTrendSvg(forecast)}${forecastMetricsHtml(forecast)}<section class="local-cycle-usage"><div class="card-head"><div><p class="quota-provider">LOCAL OBSERVATION</p><h3>同期本机官方订阅记录（未归属此账号/额度）</h3></div></div><p class="quota-boundary">只统计 ${date(local.from)} — ${date(local.to)} 范围内本机已采集的 Codex 官方订阅请求。它不能证明这些 Tokens 属于上方账号、额度类别或百分比窗口。</p><div class="cycle-metrics"><div><span>Tokens</span><strong>${local.tokens == null ? "未知" : num(local.tokens)}</strong></div><div><span>请求</span><strong>${local.requests == null ? "未知" : num(local.requests)}</strong></div><div><span>保留明细</span><strong>${local.rows == null ? "未知" : num(local.rows)}</strong></div></div>${models.length ? `<div class="table-wrap"><table><thead><tr><th>模型</th><th>Tokens</th><th>请求</th></tr></thead><tbody>${models.map((model) => `<tr><td>${esc(model.model || "未知模型")}</td><td>${model.tokens == null ? "未知" : num(model.tokens)}</td><td>${model.requests == null ? "未知" : num(model.requests)}</td></tr>`).join("")}</tbody></table></div>` : empty("此范围内没有已保留的模型明细", "缺失保持未知，不会用 0 补齐。")}<p class="small">来源行 ${local.sourceRows == null ? "未知" : num(local.sourceRows)} · 保留行 ${local.retainedRows == null ? "未知" : num(local.retainedRows)}${local.truncated ? " · 明细已截断" : ""}</p>${local.note ? note(local.note) : ""}</section>`,
     );
   }
   if (action === "export-sessions") {
@@ -521,6 +901,7 @@ async function act(action, id) {
     return toast("已刷新本地快照");
   }
   if (action === "scan") result = await api("scan", {});
+  if (action === "quota-official") result = await api("quota/official", {});
   if (action === "quota") {
     result = await api("quota", { provider: id });
     result.message = "额度来源已读取";
@@ -564,7 +945,16 @@ document.addEventListener("click", async (e) => {
   e.preventDefault();
   if (busy) return;
   busy = true;
+  const originalLabel = b.textContent;
+  const loadingLabels = {
+    "quota-official": "正在读取官方额度…",
+    "quota-cycle": "正在读取同期记录…",
+    quota: "正在读取附加来源…",
+  };
   b.disabled = true;
+  b.setAttribute("aria-busy", "true");
+  if (loadingLabels[b.dataset.action])
+    b.textContent = loadingLabels[b.dataset.action];
   try {
     await act(b.dataset.action, b.dataset.id);
   } catch (err) {
@@ -583,6 +973,26 @@ document.addEventListener("click", async (e) => {
   } finally {
     busy = false;
     b.disabled = false;
+    b.removeAttribute("aria-busy");
+    b.textContent = originalLabel;
+  }
+});
+document.addEventListener("change", async (e) => {
+  if (e.target.id !== "quota-cycle-select" || !e.target.value || busy) return;
+  const picker = e.target;
+  busy = true;
+  picker.disabled = true;
+  picker.setAttribute("aria-busy", "true");
+  try {
+    await act("quota-cycle", picker.value);
+  } catch (err) {
+    toast(err.message, true);
+    if (!token) login();
+  } finally {
+    busy = false;
+    picker.disabled = false;
+    picker.removeAttribute("aria-busy");
+    picker.value = "";
   }
 });
 document.addEventListener("input", (e) => {

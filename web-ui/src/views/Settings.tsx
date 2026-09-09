@@ -57,7 +57,7 @@ export function Settings({
         >
           <div className="settings-body">
             <p>
-              安装 UsageMesh 2.6.0
+              安装 UsageMesh 2.7.0
               或更新版本后，在终端运行以下命令。浏览器会打开独立的本地管理页面。
             </p>
             <CopyCommand command="usagemesh serve" />

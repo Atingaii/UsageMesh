@@ -224,6 +224,29 @@ pub fn write_cached_ledger(ledger: &crate::model::Ledger) -> Result<()> {
     write_private(&path, &serde_json::to_vec(ledger)?)
 }
 
+pub fn sync_pending() -> Result<bool> {
+    Ok(ledger_cache_path()?
+        .with_file_name("sync-pending")
+        .try_exists()?)
+}
+
+pub fn mark_sync_pending() -> Result<()> {
+    let path = ledger_cache_path()?.with_file_name("sync-pending");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    write_private(&path, b"pending\n")
+}
+
+pub fn clear_sync_pending() -> Result<()> {
+    let path = ledger_cache_path()?.with_file_name("sync-pending");
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn write_private(path: &Path, data: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     #[cfg(unix)]

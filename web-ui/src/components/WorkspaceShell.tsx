@@ -6,6 +6,7 @@ import {
   CircleHelp,
   Database,
   Github,
+  Gauge,
   LayoutDashboard,
   LockKeyhole,
   Menu,
@@ -37,6 +38,13 @@ export const NAV = [
     icon: ChartNoAxesCombined,
     eyebrow: "USAGE ANALYTICS",
     description: "从用量结构到请求细节，找到真正值得关注的变化。",
+  },
+  {
+    id: "quota-cycles",
+    label: "周期用量",
+    icon: Gauge,
+    eyebrow: "OFFICIAL QUOTA CYCLES",
+    description: "按 Codex 官方重置窗口，汇总所有已读取设备的官方订阅用量。",
   },
   {
     id: "aggregated",

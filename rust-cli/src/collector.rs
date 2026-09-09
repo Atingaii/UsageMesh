@@ -135,7 +135,7 @@ fn add_grouped(
     entry.cost_lower_bound |= cost_lower_bound;
 }
 
-fn route_for_message(
+pub(crate) fn route_for_message(
     evidence: &EvidenceBundle,
     message: &ParsedMessage,
     client: &str,
@@ -360,7 +360,8 @@ pub fn collect(device: DeviceInfo, since: Option<String>) -> Result<Ledger> {
 
     trim_request_details(&mut request_details);
     Ok(Ledger {
-        schema_version: 7,
+        official_quota: serde_json::Value::Null,
+        schema_version: crate::model::CURRENT_LEDGER_SCHEMA_VERSION,
         generated_at: chrono::Utc::now().to_rfc3339(),
         device,
         rows,
@@ -399,6 +400,64 @@ pub fn merge_incremental(mut previous: Ledger, partial: Ledger, since: &str) -> 
     previous
 }
 
+/// Keep cloud freshness bounded without publishing every identical local quota sample.
+/// Local history still retains all observations for forecasting.
+pub fn quota_update_for_sync(
+    previous: &serde_json::Value,
+    current: serde_json::Value,
+) -> serde_json::Value {
+    fn semantic(value: &serde_json::Value) -> serde_json::Value {
+        let mut value = value.clone();
+        if let Some(latest) = value["latest"].as_array_mut() {
+            for item in latest.iter_mut() {
+                if let Some(object) = item.as_object_mut() {
+                    object.remove("updatedAt");
+                }
+                if let Some(windows) = item["windows"].as_array_mut() {
+                    for window in windows {
+                        if window["usedPercent"].as_f64() == Some(0.0) {
+                            if let Some(object) = window.as_object_mut() {
+                                object.remove("resetsAt");
+                            }
+                        }
+                    }
+                }
+            }
+            latest.sort_by_key(|item| format!("{}:{}", item["accountKey"], item["limitId"]));
+        }
+        if let Some(cycles) = value["cycles"].as_array_mut() {
+            for cycle in cycles.iter_mut() {
+                if let Some(object) = cycle.as_object_mut() {
+                    object.remove("lastObservedAt");
+                    object.remove("samples");
+                }
+            }
+            cycles.sort_by_key(|cycle| cycle["id"].to_string());
+        }
+        if let Some(usage) = value["officialUsage"].as_object_mut() {
+            usage.remove("updatedAt");
+        }
+        value
+    }
+    let recent = previous["latest"].as_array().is_some_and(|items| {
+        !items.is_empty()
+            && items.iter().all(|item| {
+                item["updatedAt"]
+                    .as_str()
+                    .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                    .is_some_and(|at| {
+                        (0..600)
+                            .contains(&chrono::Utc::now().signed_duration_since(at).num_seconds())
+                    })
+            })
+    });
+    if recent && semantic(previous) == semantic(&current) {
+        previous.clone()
+    } else {
+        current
+    }
+}
+
 pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
     left.schema_version == right.schema_version
         && left.device.id == right.device.id
@@ -406,6 +465,7 @@ pub fn same_accounting(left: &Ledger, right: &Ledger) -> bool {
         && left.requests == right.requests
         && left.totals == right.totals
         && left.pricing == right.pricing
+        && left.official_quota == right.official_quota
 }
 
 #[cfg(test)]
@@ -414,6 +474,7 @@ mod tests {
 
     fn empty_ledger(schema_version: u32, device_id: &str) -> Ledger {
         Ledger {
+            official_quota: serde_json::Value::Null,
             schema_version,
             generated_at: "2026-08-26T00:00:00Z".to_string(),
             device: DeviceInfo {
@@ -506,6 +567,28 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_quota_samples_wait_for_heartbeat_but_usage_changes_publish() {
+        let now = chrono::Utc::now();
+        let make = |at: chrono::DateTime<chrono::Utc>, used: f64| serde_json::json!({"latest":[{"accountKey":"a","limitId":"codex","updatedAt":at.to_rfc3339(),"status":"observed","windows":[{"usedPercent":used,"resetsAt":(at+chrono::Duration::hours(5)).to_rfc3339()}]}],"cycles":[],"officialUsage":null});
+        let previous = make(now - chrono::Duration::minutes(5), 0.0);
+        let current = make(now, 0.0);
+        assert_eq!(quota_update_for_sync(&previous, current.clone()), previous);
+        let changed = make(now, 10.0);
+        assert_eq!(quota_update_for_sync(&previous, changed.clone()), changed);
+        let mut stale = current.clone();
+        stale["latest"][0]["status"] = serde_json::json!("stale");
+        assert_eq!(quota_update_for_sync(&previous, stale.clone()), stale);
+        let mut cycle = current.clone();
+        cycle["cycles"] = serde_json::json!([{"id":"new-cycle","lastUsedPercent":1.0}]);
+        assert_eq!(quota_update_for_sync(&previous, cycle.clone()), cycle);
+        let old = make(now - chrono::Duration::minutes(11), 0.0);
+        assert_eq!(quota_update_for_sync(&old, current.clone()), current);
+        assert_eq!(
+            quota_update_for_sync(&serde_json::Value::Null, current.clone()),
+            current
+        );
+    }
+    #[test]
     fn same_accounting_requires_schema_device_and_pricing_identity() {
         let left = empty_ledger(4, "a");
         let mut right = left.clone();
@@ -519,6 +602,9 @@ mod tests {
         assert!(!same_accounting(&left, &right));
         right = left.clone();
         right.pricing.policy = "other".to_string();
+        assert!(!same_accounting(&left, &right));
+        right = left.clone();
+        right.official_quota = serde_json::json!({"version":1,"latest":[]});
         assert!(!same_accounting(&left, &right));
     }
 }

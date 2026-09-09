@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 7;
+pub const CURRENT_LEDGER_SCHEMA_VERSION: u32 = 8;
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -129,6 +129,9 @@ pub struct RequestDetail {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Ledger {
+    /// Optional official quota snapshots; encrypted with the device usage ledger.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub official_quota: serde_json::Value,
     pub schema_version: u32,
     pub generated_at: String,
     pub device: DeviceInfo,

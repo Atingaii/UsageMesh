@@ -48,6 +48,9 @@ pub fn conditions(
         ));
     }
     for q in quotas {
+        if q["status"] == "stale" {
+            continue;
+        }
         let stamp = q["updatedAt"]
             .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
@@ -75,10 +78,17 @@ pub fn conditions(
                     .is_some_and(|n| n >= prefs.quota_threshold)
                 {
                     result.push((
-                        format!("quota:{}:{}", q["provider"], w["name"]),
+                        format!(
+                            "quota:{}:{}:{}:{}:{}",
+                            q["provider"], q["accountKey"], q["limitId"], w["name"], w["resetsAt"]
+                        ),
                         format!(
                             "{} 的 {} 窗口用量达到 {}%。",
-                            q["provider"].as_str().unwrap_or("供应商"),
+                            q["limitName"]
+                                .as_str()
+                                .or_else(|| q["limitId"].as_str())
+                                .or_else(|| q["provider"].as_str())
+                                .unwrap_or("供应商"),
                             w["name"].as_str().unwrap_or("额度"),
                             w["usedPercent"]
                         ),
@@ -176,6 +186,26 @@ mod tests {
             let q = json!({"provider":"codex","source":"local-cli-telemetry","updatedAt":(chrono::Utc::now()-chrono::Duration::minutes(age)).to_rfc3339(),"windows":[{"name":"primary","usedPercent":99}]});
             assert!(conditions(&json!({}), &[q], &prefs, &BTreeMap::new()).is_empty());
         }
+    }
+    #[test]
+    fn official_buckets_and_resets_have_distinct_alert_keys() {
+        let make = |bucket: &str, minutes: i64| json!({"provider":"codex","accountKey":"account","limitId":bucket,"source":"codex-app-server","status":"observed","updatedAt":chrono::Utc::now().to_rfc3339(),"windows":[{"name":"primary","usedPercent":99,"resetsAt":(chrono::Utc::now()+chrono::Duration::minutes(minutes)).to_rfc3339()}]});
+        let mut stale = make("old", 60);
+        stale["status"] = json!("stale");
+        let result = conditions(
+            &json!({}),
+            &[
+                make("codex", 60),
+                make("spark", 60),
+                make("codex", 120),
+                stale,
+            ],
+            &Preferences::default(),
+            &BTreeMap::new(),
+        );
+        assert_eq!(result.len(), 3);
+        let keys: std::collections::BTreeSet<_> = result.iter().map(|v| &v.0).collect();
+        assert_eq!(keys.len(), 3);
     }
     #[test]
     fn cooldown_prevents_duplicate_alerts_and_loss_is_not_recovery() {

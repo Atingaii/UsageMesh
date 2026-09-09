@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -32,11 +32,21 @@ pub fn codex(paths: &Paths) -> Value {
     let mut windows = Vec::new();
     let mut observed = String::new();
     for path in files {
-        if let Ok(file) = File::open(path) {
-            for line in BufReader::new(file.take(32 * 1024 * 1024))
-                .split(b'\n')
-                .map_while(|r| r.ok())
-            {
+        if let Ok(mut file) = File::open(path) {
+            const TAIL_BYTES: u64 = 8 * 1024 * 1024;
+            let start = file
+                .metadata()
+                .map(|m| m.len().saturating_sub(TAIL_BYTES))
+                .unwrap_or(0);
+            if file.seek(SeekFrom::Start(start)).is_err() {
+                continue;
+            }
+            let mut reader = BufReader::new(file.take(TAIL_BYTES));
+            if start > 0 {
+                let mut partial = Vec::new();
+                let _ = reader.read_until(b'\n', &mut partial);
+            }
+            for line in reader.split(b'\n').map_while(|r| r.ok()) {
                 if line.len() > 2_000_000 {
                     continue;
                 };
@@ -71,7 +81,14 @@ pub fn codex(paths: &Paths) -> Value {
     json!({"provider":"codex","source":"local-cli-telemetry","account":"本机最近记录，账号身份未核实","updatedAt":observed,"windows":windows,"status":if latest==0{"unavailable"}else{"observed"},"note":"CLI 记录的供应商额度快照，不是用 Token 推算。旧记录或过期窗口不能当作当前剩余额度。"})
 }
 fn parse_windows(v: &Value) -> Vec<Value> {
-    ["primary","secondary","tertiary"].iter().filter_map(|k|{let w=&v[*k];let used=w["used_percent"].as_f64().or_else(||w["usedPercent"].as_f64()).filter(|p|p.is_finite()&&(0.0..=100.).contains(p))?;let reset=w["resets_at"].as_i64().and_then(|n|chrono::DateTime::from_timestamp(n,0)).map(|t|t.to_rfc3339()).or_else(||w["resetsAt"].as_str().map(String::from));Some(json!({"name":k,"usedPercent":used,"remainingPercent":100.-used,"resetsAt":reset,"windowMinutes":w.get("window_minutes").or_else(||w.get("windowMinutes"))}))}).collect()
+    ["primary", "secondary", "tertiary"].iter().filter_map(|k| {
+        let w = &v[*k];
+        let used = w["used_percent"].as_f64().or_else(|| w["usedPercent"].as_f64()).filter(|p| p.is_finite() && (0.0..=100.0).contains(p))?;
+        let value = w.get("resets_at").or_else(||w.get("resetsAt"));
+        let reset = value.and_then(|r| r.as_i64().and_then(|n|chrono::DateTime::from_timestamp(n,0)).map(|t|t.to_rfc3339()).or_else(||r.as_str().and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok()).map(|t|t.to_rfc3339())));
+        let minutes = w.get("window_minutes").or_else(||w.get("windowMinutes")).or_else(||w.get("windowDurationMins")).and_then(Value::as_i64).filter(|n|(1..=525600).contains(n));
+        Some(json!({"name":k,"usedPercent":used,"remainingPercent":100.0-used,"resetsAt":reset,"windowMinutes":minutes}))
+    }).collect()
 }
 pub fn command_json(mut command: Command) -> Result<Value> {
     command
@@ -135,6 +152,23 @@ pub fn fetch_codexbar(provider: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn supports_official_window_fields_and_large_log_tail() {
+        let w = parse_windows(
+            &json!({"primary":{"usedPercent":0,"windowDurationMins":10080,"resetsAt":1789445113}}),
+        );
+        assert_eq!(w[0]["windowMinutes"], 10080);
+        assert!(w[0]["resetsAt"].as_str().unwrap().contains("2026-09-15"));
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::new(Some(dir.path().into()), None).unwrap();
+        std::fs::create_dir_all(paths.codex.join("sessions")).unwrap();
+        let mut file = File::create(paths.codex.join("sessions/large.jsonl")).unwrap();
+        use std::io::Write;
+        file.set_len(33 * 1024 * 1024).unwrap();
+        file.seek(SeekFrom::End(0)).unwrap();
+        writeln!(file,"\n{}",json!({"timestamp":"2026-09-09T12:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":42,"window_minutes":300}}}})).unwrap();
+        assert_eq!(codex(&paths)["windows"][0]["usedPercent"], 42.);
+    }
     #[test]
     fn percent_is_not_a_fraction() {
         let w = parse_windows(&json!({"primary":{"usedPercent":0.5}}));

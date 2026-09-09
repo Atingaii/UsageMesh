@@ -1,0 +1,14 @@
+UsageMesh v2.7.0 — official subscription cycles across devices
+
+- Read current ChatGPT subscription quotas directly through the installed Codex App Server.
+- Keep independent account/limit/window histories, with reset and adjustment segments and explicit last-observed labels.
+- Sync sanitized quota windows inside encrypted device ledgers and aggregate official subscription usage across devices by reset period.
+- Keep official daily token activity separate from reset-window percentages and local accounting.
+- Explain missing devices, minute-boundary uncertainty and unverified account attribution instead of inventing exact totals.
+- Preserve quota history across restarts and serialize local service / sync writes.
+
+- Add shared quota burn-rate forecasting, reset projections, sustainable pace and observed trend charts inspired by open-source subscription monitors.
+- Add an explicitly calibrated token-capacity scenario, keeping official quota facts distinct from estimates.
+- Polish typography, input spacing, focus states and compact responsive layouts with local Antigravity assistance.
+- Avoid zero-usage sliding-window history spam; preserve same-account daily usage cache on transient failure.
+- Throttle background official sampling to five minutes and retain a pending marker until publication succeeds, while preserving locally collected records.

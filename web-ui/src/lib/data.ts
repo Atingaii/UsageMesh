@@ -4,7 +4,13 @@ import type {
   DeviceInfo,
   DashboardDataset,
   PricingStatus,
+  OfficialQuotaCycle,
+  OfficialQuotaData,
+  OfficialQuotaSnapshot,
+  OfficialQuotaWindow,
+  OfficialUsageSnapshot,
 } from "./types";
+import { mergeOfficialQuotaData } from "./quotaCycles";
 
 async function applyDynamicPricing(
   records: UsageRecord[],
@@ -127,6 +133,244 @@ interface Ledger {
   };
   rows?: LedgerRow[];
   requests?: LedgerRequest[];
+  officialQuota?: unknown;
+}
+
+const RFC3339 =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function object(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function textValue(value: unknown, max = 200): string | null {
+  if (typeof value !== "string") return null;
+  const valueText = value.trim();
+  return valueText && valueText.length <= max ? valueText : null;
+}
+
+function dateValue(value: unknown, nullable = false): string | null {
+  if (nullable && value == null) return null;
+  const valueText = textValue(value, 40);
+  return valueText &&
+    RFC3339.test(valueText) &&
+    Number.isFinite(Date.parse(valueText))
+    ? valueText
+    : null;
+}
+
+function finiteNumber(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= min &&
+    value <= max
+    ? value
+    : null;
+}
+
+function quotaWindow(value: unknown): OfficialQuotaWindow | null {
+  const row = object(value);
+  if (!row) return null;
+  const name = textValue(row.name);
+  const usedPercent = finiteNumber(row.usedPercent, 0, 100);
+  const remainingPercent = finiteNumber(row.remainingPercent, 0, 100);
+  const resetsAt = dateValue(row.resetsAt, true);
+  const windowMinutes =
+    row.windowMinutes == null
+      ? null
+      : finiteNumber(row.windowMinutes, 1, 10 * 365 * 24 * 60);
+  if (!name || usedPercent == null || remainingPercent == null) return null;
+  if (row.resetsAt != null && !resetsAt) return null;
+  if (row.windowMinutes != null && windowMinutes == null) return null;
+  return { name, usedPercent, remainingPercent, resetsAt, windowMinutes };
+}
+
+function quotaSnapshot(value: unknown): OfficialQuotaSnapshot | null {
+  const row = object(value);
+  if (
+    !row ||
+    row.provider !== "codex" ||
+    row.source !== "codex-app-server" ||
+    row.status !== "observed"
+  )
+    return null;
+  const accountKey = textValue(row.accountKey);
+  const account = textValue(row.account);
+  const limitId = textValue(row.limitId);
+  const limitName = row.limitName == null ? limitId : textValue(row.limitName);
+  const planType = row.planType == null ? "unknown" : textValue(row.planType);
+  const updatedAt = dateValue(row.updatedAt);
+  const windows = Array.isArray(row.windows)
+    ? row.windows
+        .slice(0, 32)
+        .map(quotaWindow)
+        .filter((item): item is OfficialQuotaWindow => Boolean(item))
+    : [];
+  if (
+    !accountKey ||
+    !account ||
+    !limitId ||
+    !limitName ||
+    !planType ||
+    !updatedAt
+  )
+    return null;
+  return {
+    provider: "codex",
+    source: "codex-app-server",
+    accountKey,
+    account,
+    limitId,
+    limitName,
+    planType,
+    updatedAt,
+    status: "observed",
+    windows,
+  };
+}
+
+function quotaCycle(value: unknown): OfficialQuotaCycle | null {
+  const row = object(value);
+  if (!row) return null;
+  const id = textValue(row.id);
+  const accountKey = textValue(row.accountKey);
+  const account = textValue(row.account);
+  const limitId = textValue(row.limitId);
+  const limitName = textValue(row.limitName);
+  const windowName = textValue(row.windowName);
+  const windowMinutes =
+    row.windowMinutes == null
+      ? null
+      : finiteNumber(row.windowMinutes, 1, 10 * 365 * 24 * 60);
+  const resetsAt = dateValue(row.resetsAt);
+  const nominalStartAt = dateValue(row.nominalStartAt);
+  const firstObservedAt = dateValue(row.firstObservedAt);
+  const lastObservedAt = dateValue(row.lastObservedAt);
+  const firstUsedPercent = finiteNumber(row.firstUsedPercent, 0, 100);
+  const lastUsedPercent = finiteNumber(row.lastUsedPercent, 0, 100);
+  const closedAt = dateValue(row.closedAt, true);
+  const closureReason =
+    row.closureReason == null ||
+    row.closureReason === "reset-adjustment" ||
+    row.closureReason === "window-changed"
+      ? row.closureReason
+      : undefined;
+  const segment = finiteNumber(row.segment, 0, 10_000);
+  const samples = Array.isArray(row.samples)
+    ? row.samples.slice(0, 10_000).flatMap((sample) => {
+        const item = object(sample);
+        const at = dateValue(item?.at);
+        const usedPercent = finiteNumber(item?.usedPercent, 0, 100);
+        return at && usedPercent != null ? [{ at, usedPercent }] : [];
+      })
+    : [];
+  if (
+    !id ||
+    !accountKey ||
+    !account ||
+    !limitId ||
+    !limitName ||
+    !windowName ||
+    (row.windowMinutes != null && windowMinutes == null) ||
+    !resetsAt ||
+    !nominalStartAt ||
+    !firstObservedAt ||
+    !lastObservedAt ||
+    firstUsedPercent == null ||
+    lastUsedPercent == null ||
+    (row.closedAt != null && !closedAt) ||
+    closureReason === undefined ||
+    segment == null ||
+    !Number.isInteger(segment)
+  )
+    return null;
+  return {
+    id,
+    accountKey,
+    account,
+    limitId,
+    limitName,
+    windowName,
+    windowMinutes,
+    resetsAt,
+    nominalStartAt,
+    firstObservedAt,
+    lastObservedAt,
+    firstUsedPercent,
+    lastUsedPercent,
+    samples,
+    closedAt,
+    closureReason,
+    segment,
+  };
+}
+
+function officialUsage(value: unknown): OfficialUsageSnapshot | null {
+  const row = object(value);
+  if (!row) return null;
+  const accountKey = textValue(row.accountKey);
+  const updatedAt = dateValue(row.updatedAt);
+  const status =
+    row.status === "observed" ||
+    row.status === "stale" ||
+    row.status === "unavailable"
+      ? row.status
+      : null;
+  const error = row.error == null ? undefined : textValue(row.error, 500);
+  let dailyUsageBuckets: OfficialUsageSnapshot["dailyUsageBuckets"] = null;
+  if (Array.isArray(row.dailyUsageBuckets)) {
+    dailyUsageBuckets = row.dailyUsageBuckets
+      .slice(0, 4_000)
+      .flatMap((bucket) => {
+        const item = object(bucket);
+        const startDate = textValue(item?.startDate, 10);
+        const tokens = finiteNumber(item?.tokens, 0, Number.MAX_SAFE_INTEGER);
+        return startDate && DATE.test(startDate) && tokens != null
+          ? [{ startDate, tokens }]
+          : [];
+      });
+  } else if (row.dailyUsageBuckets != null) {
+    return null;
+  }
+  if (!accountKey || !updatedAt || !status || (row.error != null && !error))
+    return null;
+  return {
+    accountKey,
+    updatedAt,
+    summary: row.summary ?? null,
+    dailyUsageBuckets,
+    status,
+    ...(error ? { error } : {}),
+  };
+}
+
+export function sanitizeOfficialQuota(
+  value: unknown,
+): OfficialQuotaData | null {
+  const row = object(value);
+  if (!row || row.version !== 1) return null;
+  const latest = Array.isArray(row.latest)
+    ? row.latest
+        .slice(0, 256)
+        .map(quotaSnapshot)
+        .filter((item): item is OfficialQuotaSnapshot => Boolean(item))
+    : [];
+  const cycles = Array.isArray(row.cycles)
+    ? row.cycles
+        .slice(0, 10_000)
+        .map(quotaCycle)
+        .filter((item): item is OfficialQuotaCycle => Boolean(item))
+    : [];
+  const usage = officialUsage(row.officialUsage);
+  return {
+    version: 1,
+    latest,
+    cycles,
+    officialUsage: usage ? [usage] : [],
+  };
 }
 
 export function repoFromLocation(): string {
@@ -624,6 +868,12 @@ export async function loadDashboardWithKey(
     request.device = labels.get(request.deviceId) || request.device;
   const pricing = await applyDynamicPricing(records);
   const devices = buildDeviceRows(ledgers, records, labels);
+  const officialQuota = mergeOfficialQuotaData(
+    ledgers.flatMap((ledger) => {
+      const value = sanitizeOfficialQuota(ledger.officialQuota);
+      return value ? [value] : [];
+    }),
+  );
   const lastSync =
     ledgers
       .map((ledger) => String(ledger.generatedAt || ""))
@@ -646,6 +896,7 @@ export async function loadDashboardWithKey(
     lastSync,
     warnings,
     expectedDevices: branches.length,
+    ...(officialQuota ? { officialQuota } : {}),
   };
 }
 
