@@ -41,10 +41,10 @@ export const NAV = [
   },
   {
     id: "quota-cycles",
-    label: "周期用量",
+    label: "订阅用量",
     icon: Gauge,
     eyebrow: "OFFICIAL QUOTA CYCLES",
-    description: "查看官方剩余额度，以及重置周期内的跨设备用量。",
+    description: "查看官方额度、周期用量与价值估算。",
   },
   {
     id: "aggregated",

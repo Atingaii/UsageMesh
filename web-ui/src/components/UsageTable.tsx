@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
   number,
   ROUTE_LABELS,
 } from "../lib/analytics";
+import { sortTableRows } from "../lib/tableRows";
 import { Badge, EmptyState, Modal } from "./ui";
 
 type Row = UsageRecord | RequestRecord;
@@ -162,7 +163,7 @@ export function exportRows(rows: Row[], requests = false) {
     ]),
   );
 }
-export function UsageTable({
+export const UsageTable = memo(function UsageTable({
   rows,
   requests = false,
   limitNote,
@@ -180,31 +181,37 @@ export function UsageTable({
     [detail, setDetail] = useState<Row | null>(null);
   const columns = useMemo(() => columnsFor(requests), [requests]);
   const shownColumns = columns.filter((column) => expanded || !column.extra);
+  const ordered = useMemo(() => {
+    const column = columns.find((c) => c.key === sortKey)!;
+    return sortTableRows(
+      rows,
+      (row) =>
+        sortKey === "date"
+          ? row.timestampMs || new Date(row.date).getTime() || 0
+          : column.value(row),
+      ascending,
+    );
+  }, [rows, columns, sortKey, ascending]);
+  // Search text is created only when needed, then reused while typing. Sorting
+  // is independent of the query so each keystroke only filters the stable order.
+  const searchValues = useMemo(
+    () => new WeakMap<Row, string[]>(),
+    [rows, columns],
+  );
   const sorted = useMemo(() => {
-    const q = query.trim().toLowerCase(),
-      column = columns.find((c) => c.key === sortKey)!;
-    return rows
-      .filter(
-        (row) =>
-          !q ||
-          columns.some((c) => String(c.value(row)).toLowerCase().includes(q)),
-      )
-      .sort((a, b) => {
-        const av =
-          sortKey === "date"
-            ? a.timestampMs || new Date(a.date).getTime() || 0
-            : column.value(a);
-        const bv =
-          sortKey === "date"
-            ? b.timestampMs || new Date(b.date).getTime() || 0
-            : column.value(b);
-        const compare =
-          typeof av === "number" && typeof bv === "number"
-            ? av - bv
-            : String(av).localeCompare(String(bv), "zh-CN", { numeric: true });
-        return (ascending ? compare : -compare) || a.id.localeCompare(b.id);
-      });
-  }, [rows, query, columns, sortKey, ascending]);
+    const q = query.trim().toLowerCase();
+    if (!q) return ordered;
+    return ordered.filter((row) => {
+      let values = searchValues.get(row);
+      if (!values) {
+        values = columns.map((column) =>
+          String(column.value(row)).toLowerCase(),
+        );
+        searchValues.set(row, values);
+      }
+      return values.some((value) => value.includes(q));
+    });
+  }, [ordered, query, columns, searchValues]);
   const pages = Math.max(1, Math.ceil(sorted.length / pageSize)),
     currentPage = Math.min(page, pages);
   const visible = sorted.slice(
@@ -450,4 +457,4 @@ export function UsageTable({
       )}
     </section>
   );
-}
+});

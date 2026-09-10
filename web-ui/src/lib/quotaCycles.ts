@@ -65,19 +65,27 @@ export function displayQuotaCycles(
   cycles: OfficialQuotaCycle[],
 ): OfficialQuotaCycle[] {
   const groups: OfficialQuotaCycle[][] = [];
+  const lastGroup = new Map<string, OfficialQuotaCycle[]>();
   for (const cycle of [...cycles].sort(
     (a, b) => time(a.resetsAt) - time(b.resetsAt),
   )) {
-    const group = groups.find(
-      ([first]) =>
-        first.accountKey === cycle.accountKey &&
-        first.limitId === cycle.limitId &&
-        first.windowName === cycle.windowName &&
-        first.windowMinutes === cycle.windowMinutes &&
-        Math.abs(time(first.resetsAt) - time(cycle.resetsAt)) <= 5_000,
-    );
-    if (group) group.push(cycle);
-    else groups.push([cycle]);
+    const key = JSON.stringify([
+      cycle.accountKey,
+      cycle.limitId,
+      cycle.windowName,
+      cycle.windowMinutes,
+    ]);
+    const group = lastGroup.get(key);
+    if (
+      group &&
+      Math.abs(time(group[0].resetsAt) - time(cycle.resetsAt)) <= 5000
+    )
+      group.push(cycle);
+    else {
+      const next = [cycle];
+      groups.push(next);
+      lastGroup.set(key, next);
+    }
   }
   return groups
     .map(
@@ -210,50 +218,56 @@ export function aggregateQuotaCycle(
   };
 }
 
-/** Extrapolate recorded API-equivalent cost by elapsed time, never quota percent. */
+/** API-equivalent value at 100% quota, not a time-based spending forecast. */
 export function forecastCycleCost(
   aggregation: CycleAggregation,
-  syncedAt: string | null,
+  usedPercent: number,
+  observedAt: string,
+  syncedAt: string,
   nowMs = Date.now(),
 ): {
   total: number;
+  remaining: number;
   recorded: number;
   asOf: number;
-  elapsedFraction: number;
+  usedPercent: number;
   partialPricing: boolean;
 } | null {
   const { from, to } = aggregation.bounds;
+  const asOf = time(observedAt);
   const syncedMs = time(syncedAt);
-  const asOf = Math.min(nowMs, syncedMs);
   if (
-    ![from, to, nowMs, asOf].every(Number.isFinite) ||
+    ![from, to, asOf, syncedMs, nowMs, usedPercent].every(Number.isFinite) ||
+    usedPercent <= 0 ||
+    usedPercent > 100 ||
     to <= from ||
     nowMs >= to ||
-    asOf <= from
+    asOf < from ||
+    asOf > nowMs ||
+    nowMs - asOf > 15 * 60_000 ||
+    syncedMs < asOf
   )
     return null;
-  // Use completed minutes and the ledger's timestamp so an offline device is
-  // not silently treated as having zero spend since its last synchronization.
-  const rows = aggregation.rows.filter(
-    (row) => row.timestampMs + 60_000 <= asOf,
-  );
-  if (
-    !rows.length ||
-    rows.some((row) => !Number.isFinite(row.cost) || row.cost < 0)
-  )
-    return null;
-  const elapsedFraction = (asOf - from) / (to - from);
-  const recorded = rows.reduce((sum, row) => sum + row.cost, 0);
-  const total = recorded / elapsedFraction;
+  let recorded = 0,
+    count = 0,
+    partialPricing = false;
+  for (const row of aggregation.rows) {
+    if (row.timestampMs + 60_000 > asOf) continue;
+    if (!Number.isFinite(row.cost) || row.cost < 0) return null;
+    recorded += row.cost;
+    count++;
+    partialPricing ||= row.costLowerBound || !row.pricingResolved;
+  }
+  if (!count || recorded <= 0) return null;
+  const total = (recorded / usedPercent) * 100;
   if (!Number.isFinite(total)) return null;
   return {
     total,
+    remaining: Math.max(0, total - recorded),
     recorded,
     asOf,
-    elapsedFraction,
-    partialPricing: rows.some(
-      (row) => row.costLowerBound || !row.pricingResolved,
-    ),
+    usedPercent,
+    partialPricing,
   };
 }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  createDashboardLoadCache,
   loadDashboardWithKey,
   repoFromLocation,
   unlockDashboard,
@@ -21,6 +22,7 @@ export function useDashboard(refreshSeconds: number) {
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const key = useRef("");
+  const cache = useRef(createDashboardLoadCache());
   const generation = useRef(0);
   const busy = useRef(false);
   const sessionTimes = useRef({ created: Date.now(), active: Date.now() });
@@ -34,6 +36,7 @@ export function useDashboard(refreshSeconds: number) {
   const lock = useCallback(() => {
     generation.current += 1;
     key.current = "";
+    cache.current = createDashboardLoadCache();
     busy.current = false;
     setDataset(null);
     setError(null);
@@ -46,7 +49,11 @@ export function useDashboard(refreshSeconds: number) {
     busy.current = true;
     setSyncStatus("syncing");
     try {
-      const next = await loadDashboardWithKey(repoFromLocation(), key.current);
+      const next = await loadDashboardWithKey(
+        repoFromLocation(),
+        key.current,
+        cache.current,
+      );
       if (run === generation.current) publish(next);
     } catch (error) {
       if (run === generation.current) {
@@ -64,11 +71,16 @@ export function useDashboard(refreshSeconds: number) {
         const restored = await restoreDashboardSession(repoFromLocation());
         if (!restored || run !== generation.current) return;
         key.current = restored;
-        const next = await loadDashboardWithKey(repoFromLocation(), restored);
+        const next = await loadDashboardWithKey(
+          repoFromLocation(),
+          restored,
+          cache.current,
+        );
         if (run === generation.current) publish(next);
       } catch {
         if (run === generation.current) {
           key.current = "";
+          cache.current = createDashboardLoadCache();
           setError("暂时无法恢复工作区，请检查网络后重新解锁。");
         }
       } finally {
@@ -77,6 +89,7 @@ export function useDashboard(refreshSeconds: number) {
     })();
     return () => {
       generation.current += 1;
+      cache.current = createDashboardLoadCache();
     };
   }, [publish]);
 
@@ -84,8 +97,9 @@ export function useDashboard(refreshSeconds: number) {
     const run = ++generation.current;
     setError(null);
     setSessionNotice(null);
+    cache.current = createDashboardLoadCache();
     try {
-      const result = await unlockDashboard(password);
+      const result = await unlockDashboard(password, cache.current);
       if (run !== generation.current) return;
       try {
         await rememberDashboardSession(repoFromLocation(), result.key);
@@ -97,8 +111,10 @@ export function useDashboard(refreshSeconds: number) {
       sessionTimes.current = { created: Date.now(), active: Date.now() };
       publish(result.dataset);
     } catch (error) {
-      if (run === generation.current)
+      if (run === generation.current) {
+        cache.current = createDashboardLoadCache();
         setError(error instanceof Error ? error.message : "工作区解锁失败");
+      }
     }
   };
 

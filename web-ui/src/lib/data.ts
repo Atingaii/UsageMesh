@@ -136,6 +136,16 @@ interface Ledger {
   officialQuota?: unknown;
 }
 
+// Owned by one unlocked hook session, never persisted or shared globally.
+export interface DashboardLoadCache {
+  scope?: string;
+  ledgers: Map<string, { envelope: LedgerEnvelope; ledger: Ledger }>;
+  snapshot?: { sources: Ledger[]; dataset: DashboardDataset };
+}
+export function createDashboardLoadCache(): DashboardLoadCache {
+  return { ledgers: new Map() };
+}
+
 const RFC3339 =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -498,7 +508,8 @@ async function decryptLedger(
   repo: string,
   branch: string,
   encodedKey: string,
-): Promise<Ledger> {
+  cache?: DashboardLoadCache,
+): Promise<{ ledger: Ledger; source: Ledger }> {
   const envelope = await json<LedgerEnvelope>(
     `${RAW}/${repo}/${branch}/ledger.json`,
   );
@@ -507,47 +518,59 @@ async function decryptLedger(
     envelope.schemaVersion !== 2 ||
     envelope.algorithm !== "AES-256-GCM" ||
     branch !== `um-ledger-${envelope.deviceHash}`
-  ) {
+  )
     throw new Error(`设备账本格式不受支持 (${branch})`);
-  }
-  const key = await crypto.subtle.importKey(
-    "raw",
-    b64url(encodedKey),
-    "AES-GCM",
-    false,
-    ["decrypt"],
-  );
-  try {
-    const plaintext = await crypto.subtle.decrypt(
-      {
-        name: "AES-GCM",
-        iv: b64url(envelope.nonce),
-        additionalData: new TextEncoder().encode(
-          `${LEDGER_AAD_PREFIX}${envelope.deviceHash}`,
-        ),
-      },
-      key,
-      b64url(envelope.ciphertext),
-    );
-    const ledger = JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+  const previous = cache?.ledgers.get(branch);
+  let source: Ledger;
+  if (
+    previous &&
+    previous.envelope.nonce === envelope.nonce &&
+    previous.envelope.ciphertext === envelope.ciphertext
+  ) {
+    source = previous.ledger;
+  } else {
     try {
-      const presence = await json<DevicePresence>(
-        `${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${envelope.deviceHash}/presence.json`,
+      const key = await crypto.subtle.importKey(
+        "raw",
+        b64url(encodedKey),
+        "AES-GCM",
+        false,
+        ["decrypt"],
       );
-      if (
-        presence.kind === "usagemesh-device-presence" &&
-        presence.schemaVersion === 1 &&
-        presence.deviceHash === envelope.deviceHash
-      ) {
-        ledger.presenceUpdatedAt = String(presence.updatedAt || "");
-      }
+      const plaintext = await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: b64url(envelope.nonce),
+          additionalData: new TextEncoder().encode(
+            `${LEDGER_AAD_PREFIX}${envelope.deviceHash}`,
+          ),
+        },
+        key,
+        b64url(envelope.ciphertext),
+      );
+      source = JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
+      cache?.ledgers.set(branch, { envelope, ledger: source });
     } catch {
-      // Backward compatibility: pre-resident-agent devices have no presence branch.
+      throw new Error(`设备账本解密失败 (${branch})`);
     }
-    return ledger;
-  } catch {
-    throw new Error(`设备账本解密失败 (${branch})`);
   }
+  // Heartbeats change independently from the encrypted usage payload. Refresh
+  // them even on a cache hit, without mutating the cached accounting source.
+  const ledger = { ...source };
+  try {
+    const presence = await json<DevicePresence>(
+      `${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${envelope.deviceHash}/presence.json`,
+    );
+    if (
+      presence.kind === "usagemesh-device-presence" &&
+      presence.schemaVersion === 1 &&
+      presence.deviceHash === envelope.deviceHash
+    )
+      ledger.presenceUpdatedAt = String(presence.updatedAt || "");
+  } catch {
+    // Older devices have no presence branch; use their ledger timestamp.
+  }
+  return { ledger, source };
 }
 
 function platformLabel(platform: string): string {
@@ -833,17 +856,30 @@ function buildDeviceRows(
 export async function loadDashboardWithKey(
   repo: string,
   key: string,
+  cache?: DashboardLoadCache,
 ): Promise<DashboardDataset> {
+  if (cache && cache.scope !== `${repo}:${key}`) {
+    cache.ledgers.clear();
+    cache.snapshot = undefined;
+    cache.scope = `${repo}:${key}`;
+  }
   const branches = await loadDeviceIndex(repo);
   const settled = await Promise.allSettled(
-    branches.map((branch) => decryptLedger(repo, branch, key)),
+    branches.map((branch) => decryptLedger(repo, branch, key, cache)),
   );
-  const ledgers = settled
+  const loaded = settled
     .filter(
-      (item): item is PromiseFulfilledResult<Ledger> =>
+      (
+        item,
+      ): item is PromiseFulfilledResult<{ ledger: Ledger; source: Ledger }> =>
         item.status === "fulfilled",
     )
     .map((item) => item.value);
+  const ledgers = loaded.map((item) => item.ledger);
+  if (cache)
+    for (const branch of cache.ledgers.keys()) {
+      if (!branches.includes(branch)) cache.ledgers.delete(branch);
+    }
   if (branches.length && !ledgers.length) {
     const reason = settled.find((item) => item.status === "rejected");
     throw reason && reason.status === "rejected"
@@ -851,29 +887,59 @@ export async function loadDashboardWithKey(
       : new Error("暂无设备数据");
   }
 
-  const records = ledgers.flatMap((ledger) =>
-    (ledger.rows || []).map((row, index) => toRecord(ledger, row, index)),
-  );
-  const requests = ledgers
-    .flatMap((ledger) =>
-      (ledger.requests || []).map((row, index) =>
-        toRequestRecord(ledger, row, index),
-      ),
-    )
-    .sort((a, b) => b.timestampMs - a.timestampMs);
+  const sources = loaded.map((item) => item.source);
+  const previous = cache?.snapshot;
+  const unchanged =
+    previous &&
+    previous.sources.length === sources.length &&
+    sources.every((source, index) => source === previous.sources[index]);
   const labels = deviceLabelsFor(ledgers);
-  for (const record of records)
-    record.device = labels.get(record.deviceId) || record.device;
-  for (const request of requests)
-    request.device = labels.get(request.deviceId) || request.device;
-  const pricing = await applyDynamicPricing(records);
-  const devices = buildDeviceRows(ledgers, records, labels);
-  const officialQuota = mergeOfficialQuotaData(
-    ledgers.flatMap((ledger) => {
-      const value = sanitizeOfficialQuota(ledger.officialQuota);
-      return value ? [value] : [];
-    }),
-  );
+  let records: UsageRecord[], requests: RequestRecord[], pricing: PricingStatus;
+  let officialQuota: OfficialQuotaData | undefined;
+  if (unchanged) {
+    ({ records, requests, pricing, officialQuota } = previous.dataset);
+  } else {
+    records = ledgers.flatMap((ledger) =>
+      (ledger.rows || []).map((row, index) => toRecord(ledger, row, index)),
+    );
+    requests = ledgers
+      .flatMap((ledger) =>
+        (ledger.requests || []).map((row, index) =>
+          toRequestRecord(ledger, row, index),
+        ),
+      )
+      .sort((a, b) => b.timestampMs - a.timestampMs);
+    for (const record of records)
+      record.device = labels.get(record.deviceId) || record.device;
+    for (const request of requests)
+      request.device = labels.get(request.deviceId) || request.device;
+    pricing = await applyDynamicPricing(records);
+    officialQuota = mergeOfficialQuotaData(
+      ledgers.flatMap((ledger) => {
+        const value = sanitizeOfficialQuota(ledger.officialQuota);
+        return value ? [value] : [];
+      }),
+    );
+  }
+  const devices = unchanged
+    ? ledgers
+        .map((ledger) => {
+          const device = previous.dataset.devices.find(
+            (item) => item.id === rawDeviceIdentity(ledger).id,
+          )!;
+          const presenceAt = ledger.presenceUpdatedAt || device.lastSync;
+          return {
+            ...device,
+            presenceAt,
+            status: deviceSyncStatus(presenceAt),
+          };
+        })
+        .sort(
+          (a, b) =>
+            b.totalTokens - a.totalTokens ||
+            a.name.localeCompare(b.name, "zh-CN", { numeric: true }),
+        )
+    : buildDeviceRows(ledgers, records, labels);
   const lastSync =
     ledgers
       .map((ledger) => String(ledger.generatedAt || ""))
@@ -887,7 +953,7 @@ export async function loadDashboardWithKey(
         ]
       : [],
   );
-  return {
+  const dataset: DashboardDataset = {
     repo,
     records,
     requests,
@@ -898,13 +964,16 @@ export async function loadDashboardWithKey(
     expectedDevices: branches.length,
     ...(officialQuota ? { officialQuota } : {}),
   };
+  if (cache) cache.snapshot = { sources, dataset };
+  return dataset;
 }
 
 export async function unlockDashboard(
   password: string,
+  cache?: DashboardLoadCache,
 ): Promise<{ dataset: DashboardDataset; key: string }> {
   const repo = repoFromLocation();
   const key = await workspaceKey(repo, password);
-  const dataset = await loadDashboardWithKey(repo, key);
+  const dataset = await loadDashboardWithKey(repo, key, cache);
   return { dataset, key };
 }

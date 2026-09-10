@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -259,7 +259,7 @@ function Ranking({
     </Section>
   );
 }
-export function Overview({
+export const Overview = memo(function Overview({
   records,
   onNavigate,
   monthlyCost,
@@ -423,4 +423,4 @@ export function Overview({
       </div>
     </div>
   );
-}
+});

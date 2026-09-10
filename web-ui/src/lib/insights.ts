@@ -1,4 +1,4 @@
-import { localDate, matchesFilters, rowDate, totals } from "./analytics";
+import { localDate, createFilterPredicate, rowDate, totals } from "./analytics";
 import { deviceSyncStatus } from "./data";
 import type { DashboardDataset, FilterState, UsageRecord } from "./types";
 export type ComparisonPeriod = "7d" | "30d" | "month";
@@ -37,15 +37,15 @@ export function compareUsage(
   now = new Date(),
 ) {
   const ranges = comparisonRanges(period, now);
-  const scope = records.filter((row) =>
-    matchesFilters(row, { ...filters, timeRange: "all" }),
-  );
-  const current = scope.filter(
-    (row) => rowDate(row) >= ranges.start && rowDate(row) < ranges.end,
-  );
-  const previous = scope.filter(
-    (row) => rowDate(row) >= ranges.previous && rowDate(row) < ranges.start,
-  );
+  const matches = createFilterPredicate({ ...filters, timeRange: "all" }, now);
+  const current: UsageRecord[] = [],
+    previous: UsageRecord[] = [];
+  for (const row of records) {
+    if (!matches(row)) continue;
+    const date = rowDate(row);
+    if (date >= ranges.start && date < ranges.end) current.push(row);
+    else if (date >= ranges.previous && date < ranges.start) previous.push(row);
+  }
   const models = new Map<
     string,
     { name: string; current: number; previous: number }
@@ -101,18 +101,20 @@ export function dataQuality(dataset: DashboardDataset, now = Date.now()) {
       !Number.isFinite(Date.parse(d.lastSync)) ||
       now - Date.parse(d.lastSync) > 24 * 60 * 60 * 1000,
   );
-  const unresolved = dataset.records.filter(
-    (r) => !r.pricingResolved || r.costLowerBound,
-  ).length;
-  const dated = dataset.records.filter((r) => !r.timestampMs).length;
-  const dates = dataset.requests
-    .map((r) => r.timestampMs)
-    .filter((t) => t > 0 && Number.isFinite(t));
+  let unresolved = 0,
+    dated = 0;
+  for (const row of dataset.records) {
+    if (!row.pricingResolved || row.costLowerBound) unresolved += 1;
+    if (!row.timestampMs) dated += 1;
+  }
   let earliest = Infinity,
     latest = -Infinity;
-  for (const t of dates) {
-    earliest = Math.min(earliest, t);
-    latest = Math.max(latest, t);
+  for (const row of dataset.requests) {
+    const t = row.timestampMs;
+    if (t > 0 && Number.isFinite(t)) {
+      earliest = Math.min(earliest, t);
+      latest = Math.max(latest, t);
+    }
   }
   return {
     missing,

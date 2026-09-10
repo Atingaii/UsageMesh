@@ -7,6 +7,7 @@ import * as session from "../src/lib/session";
 
 vi.mock("../src/lib/data", () => ({
   repoFromLocation: () => "test/repo",
+  createDashboardLoadCache: () => ({ ledgers: new Map() }),
   unlockDashboard: vi.fn(),
   loadDashboardWithKey: vi.fn(),
 }));
@@ -90,4 +91,17 @@ describe("刷新和锁定并发", () => {
       await Promise.all([one, two]);
     });
   });
+});
+
+it("锁定再解锁使用新的内存缓存，旧请求不会写回新会话", async () => {
+  const { result } = renderHook(() => useDashboard(0));
+  await waitFor(() => expect(result.current.checking).toBe(false));
+  await act(() => result.current.unlock("first"));
+  const first = vi.mocked(data.unlockDashboard).mock.calls.at(-1)?.[1];
+  act(() => result.current.lock());
+  await act(() => result.current.unlock("second"));
+  const second = vi.mocked(data.unlockDashboard).mock.calls.at(-1)?.[1];
+  expect(first).toBeDefined();
+  expect(second).toBeDefined();
+  expect(second).not.toBe(first);
 });

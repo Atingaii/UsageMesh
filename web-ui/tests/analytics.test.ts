@@ -128,3 +128,48 @@ describe("可安全打开的CSV", () => {
     expect(makeCsv(["中文"], [["设备"]])).toBe('\uFEFF"中文"\r\n"设备"');
   });
 });
+
+describe("批量筛选", () => {
+  it("批量谓词沿用本地日期、所有维度和自定义结束分钟规则", async () => {
+    const { createFilterPredicate, filterOptions } = await import(
+      "../src/lib/analytics"
+    );
+    const now = new Date(2026, 8, 7, 10);
+    const rows = [
+      record({ timestampMs: 0, date: "2026-08-31" }),
+      record({ timestampMs: new Date(2026, 8, 7, 10, 1, 59, 999).getTime() }),
+      record({ timestampMs: new Date(2026, 8, 8).getTime() }),
+      record({ timestampMs: 0, model: "other" }),
+    ];
+    for (const timeRange of [
+      "all",
+      "today",
+      "7d",
+      "30d",
+      "month",
+      "custom",
+    ] as const) {
+      const filters = {
+        ...DEFAULT_FILTERS,
+        timeRange,
+        model: "test-model",
+        customStartDate: "2026-09-07T10:00",
+        customEndDate: "2026-09-07T10:01",
+      };
+      expect(rows.filter(createFilterPredicate(filters, now))).toEqual(
+        rows.filter(
+          (row) =>
+            row.model === filters.model && inTimeRange(row, filters, now),
+        ),
+      );
+    }
+    const options = filterOptions(
+      [record({ model: "模型10" }), record({ model: "模型2" })],
+      [request({ model: "仅明细模型" })],
+    );
+    expect(options.model).toContain("仅明细模型");
+    expect(options.model.indexOf("模型2")).toBeLessThan(
+      options.model.indexOf("模型10"),
+    );
+  });
+});

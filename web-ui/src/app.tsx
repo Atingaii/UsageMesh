@@ -5,6 +5,7 @@ import React, {
   Component,
   Suspense,
   lazy,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -16,13 +17,13 @@ import { AlertCircle, Download, Plus, RefreshCw } from "lucide-react";
 import { useDashboard } from "./hooks/useDashboard";
 import {
   DEFAULT_FILTERS,
-  FILTER_LABELS,
-  matchesFilters,
+  createFilterPredicate,
+  filterOptions,
+  localDate,
   money,
   number,
   totals,
   TIME_LABELS,
-  type Dimension,
 } from "./lib/analytics";
 import {
   readPreference,
@@ -30,7 +31,7 @@ import {
   writePreference,
   type Preferences,
 } from "./lib/preferences";
-import type { ActiveTab, DynamicFilterOptions, FilterState } from "./lib/types";
+import type { ActiveTab, FilterState } from "./lib/types";
 import { UnlockScreen } from "./components/UnlockScreen";
 import { NAV, WorkspaceShell } from "./components/WorkspaceShell";
 import { FilterBar } from "./components/FilterBar";
@@ -108,50 +109,54 @@ function App() {
       window.scrollTo(0, 0);
     }
   }, [activeTab, unlocked]);
-  const navigate = (tab: ActiveTab) => {
+  const navigate = useCallback((tab: ActiveTab) => {
     location.hash = tab;
     setActiveTab(tab);
-  };
-  const options = useMemo(
-    () =>
-      Object.fromEntries(
-        (Object.keys(FILTER_LABELS) as Dimension[]).map((key) => [
-          key,
-          [
-            ...new Set(
-              [...(dataset?.records || []), ...(dataset?.requests || [])]
-                .map((row) => row[key])
-                .filter(Boolean),
-            ),
-          ].sort((a, b) => a.localeCompare(b, "zh-CN", { numeric: true })),
-        ]),
-      ) as unknown as DynamicFilterOptions,
-    [dataset],
-  );
-  const records = useMemo(
-    () =>
-      (dataset?.records || []).filter((row) => matchesFilters(row, filters)),
-    [dataset, filters],
-  );
-  const requests = useMemo(
-    () =>
-      (dataset?.requests || []).filter((row) => matchesFilters(row, filters)),
-    [dataset, filters],
-  );
-  const month = useMemo(
-    () =>
-      totals(
-        (dataset?.records || []).filter((row) =>
-          matchesFilters(row, { ...DEFAULT_FILTERS, timeRange: "month" }),
-        ),
-      ),
-    [dataset],
-  );
-  const current = NAV.find((item) => item.id === activeTab)!;
+  }, []);
   const hasFilters =
     activeTab === "overview" ||
     activeTab === "analytics" ||
     activeTab === "aggregated";
+  const options = useMemo(
+    () =>
+      hasFilters
+        ? filterOptions(dataset?.records || [], dataset?.requests || [])
+        : null,
+    [dataset?.records, dataset?.requests, hasFilters],
+  );
+  const today = localDate(new Date());
+  const predicate = useMemo(
+    () => createFilterPredicate(filters),
+    [filters, today],
+  );
+  const records = useMemo(
+    () => (hasFilters ? (dataset?.records || []).filter(predicate) : []),
+    [dataset?.records, predicate, hasFilters],
+  );
+  const requests = useMemo(
+    () =>
+      activeTab === "analytics"
+        ? (dataset?.requests || []).filter(predicate)
+        : [],
+    [dataset?.requests, predicate, activeTab],
+  );
+  const month = useMemo(
+    () =>
+      totals(
+        (dataset?.records || []).filter(
+          createFilterPredicate({ ...DEFAULT_FILTERS, timeRange: "month" }),
+        ),
+      ),
+    [dataset?.records, today],
+  );
+  const scope = useMemo(
+    () => ({
+      devices: new Set(records.map((row) => row.deviceId)).size,
+      dated: records.some((row) => !row.timestampMs),
+    }),
+    [records],
+  );
+  const current = NAV.find((item) => item.id === activeTab)!;
   if (checking)
     return (
       <div className="loading-screen" role="status">
@@ -275,7 +280,7 @@ function App() {
           <>
             <FilterBar
               filters={filters}
-              options={options}
+              options={options!}
               onChange={setFilters}
               repo={dataset.repo}
             />
@@ -285,7 +290,7 @@ function App() {
                 <span className="footer-dot">·</span>
                 {number(records.length)} 个聚合桶
                 <span className="footer-dot">·</span>
-                {new Set(records.map((row) => row.deviceId)).size} 台设备
+                {scope.devices} 台设备
               </span>
               <span>
                 {checkedAt
@@ -293,12 +298,11 @@ function App() {
                   : ""}
               </span>
             </div>
-            {filters.timeRange !== "all" &&
-              records.some((row) => !row.timestampMs) && (
-                <p className="notice">
-                  部分旧账本只有日期，暂按设备记录的日期筛选；升级设备端并同步后可精确到分钟。
-                </p>
-              )}
+            {filters.timeRange !== "all" && scope.dated && (
+              <p className="notice">
+                部分旧账本只有日期，暂按设备记录的日期筛选；升级设备端并同步后可精确到分钟。
+              </p>
+            )}
           </>
         )}
         {!dataset.records.length &&

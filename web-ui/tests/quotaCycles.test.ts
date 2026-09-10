@@ -612,74 +612,87 @@ it("读取失败的近期快照不能显示为当前额度或继续预测", asyn
         }),
       }),
     );
-    expect(screen.getByText("快照已过期")).toBeTruthy();
+    expect(screen.getByText("尚无当前官方额度")).toBeTruthy();
     expect(screen.queryByText("当前官方快照")).toBeNull();
     expect(
       screen.queryByRole("img", {
         name: "当前周期官方比例、理想节奏和线性预测",
       }),
     ).toBeNull();
-    expect(screen.getByText("耗尽预测暂不可用")).toBeTruthy();
+    expect(screen.queryByLabelText("周期金额估算")).toBeNull();
   } finally {
     cleanup();
   }
 });
 
-describe("周期总金额预测", () => {
+describe("按额度比例估算周期金额", () => {
   const usage = (overrides = {}) =>
     record({
       timestampMs: Date.parse(iso(10, 10)),
-      cost: 30,
+      cost: 50,
       billingChannel: "official-subscription",
       ...overrides,
     });
-  it("按时间进度外推金额，排除未来记录，不使用官方额度百分比", () => {
-    const result = aggregateQuotaCycle(
-      [
+  const estimate = (
+    rows = [usage()],
+    percent = 25,
+    observed = iso(10, 30),
+    synced = iso(10, 30),
+    now = Date.parse(iso(10, 30)),
+  ) =>
+    forecastCycleCost(
+      aggregateQuotaCycle(rows, cycle()),
+      percent,
+      observed,
+      synced,
+      now,
+    );
+  it("50 美元 / 25% 得到总额 200 和剩余 150，与周期已过时间无关", () => {
+    expect(estimate()).toMatchObject({
+      recorded: 50,
+      total: 200,
+      remaining: 150,
+      usedPercent: 25,
+    });
+    expect(
+      estimate([usage()], 25, iso(10, 45), iso(10, 45), Date.parse(iso(10, 45)))
+        ?.total,
+    ).toBe(200);
+  });
+  it("只用额度观测之前的完整分钟，排除未来消费", () => {
+    expect(
+      estimate([
         usage(),
-        usage({
-          id: "future",
-          timestampMs: Date.parse(iso(10, 45)),
-          cost: 900,
-        }),
-      ],
-      cycle({ lastUsedPercent: 90 }),
-    );
-    const estimate = forecastCycleCost(
-      result,
-      iso(10, 30),
-      Date.parse(iso(10, 30)),
-    );
-    expect(estimate?.recorded).toBe(30);
-    expect(estimate?.total).toBe(60);
-    expect(estimate?.elapsedFraction).toBe(0.5);
+        usage({ timestampMs: Date.parse(iso(10, 30)), cost: 900 }),
+      ])?.recorded,
+    ).toBe(50);
   });
-  it("使用最后同步时刻，避免离线后金额预测随时间错误下降", () => {
-    const result = aggregateQuotaCycle([usage()], cycle());
-    expect(
-      forecastCycleCost(result, iso(10, 20), Date.parse(iso(10, 40)))?.total,
-    ).toBe(90);
+  it("零用量、非法比例和没有计价金额不产生虚构值", () => {
+    for (const value of [0, -1, 101, NaN, Infinity])
+      expect(estimate([usage()], value)).toBeNull();
+    for (const rows of [
+      [],
+      [usage({ cost: 0 })],
+      [usage({ cost: -1 })],
+      [usage({ cost: NaN })],
+    ])
+      expect(estimate(rows)).toBeNull();
   });
-  it("历史、空记录及无效时间不伪造金额；部分计价保留提示", () => {
-    const result = aggregateQuotaCycle(
-      [usage({ costLowerBound: true })],
-      cycle(),
-    );
+  it("过期、未来、未同步到观测时点和已结束周期不预测", () => {
+    expect(estimate([usage()], 25, iso(10, 10), iso(10, 30))).toBeNull();
+    expect(estimate([usage()], 25, iso(10, 45))).toBeNull();
+    expect(estimate([usage()], 25, iso(10, 30), iso(10, 20))).toBeNull();
     expect(
-      forecastCycleCost(result, iso(10, 30), Date.parse(iso(10, 30)))
-        ?.partialPricing,
-    ).toBe(true);
-    expect(forecastCycleCost(result, iso(11), Date.parse(iso(11)))).toBeNull();
-    expect(
-      forecastCycleCost(result, "invalid", Date.parse(iso(10, 30))),
+      estimate([usage()], 25, iso(11), iso(11), Date.parse(iso(11))),
     ).toBeNull();
-    expect(
-      forecastCycleCost(
-        aggregateQuotaCycle([], cycle()),
-        iso(10, 30),
-        Date.parse(iso(10, 30)),
-      ),
-    ).toBeNull();
+    expect(estimate([usage()], 25, "invalid")).toBeNull();
+  });
+  it("100% 时剩余额度价值为零；部分计价保留提示", () => {
+    expect(estimate([usage({ costLowerBound: true })], 100)).toMatchObject({
+      total: 50,
+      remaining: 0,
+      partialPricing: true,
+    });
   });
 });
 

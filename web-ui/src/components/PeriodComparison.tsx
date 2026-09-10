@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { DashboardDataset, FilterState } from "../lib/types";
-import { compact, money } from "../lib/analytics";
+import { compact, localDate, money } from "../lib/analytics";
 import {
   changeLabel,
   compareUsage,
@@ -15,9 +15,10 @@ export function PeriodComparison({
   filters: FilterState;
 }) {
   const [period, setPeriod] = useState<ComparisonPeriod>("7d");
+  const today = localDate(new Date());
   const result = useMemo(
     () => compareUsage(dataset.records, filters, period),
-    [dataset, filters, period],
+    [dataset.records, filters, period, today],
   );
   const hasCurrent = result.currentCount > 0,
     hasPrevious = result.previousCount > 0;

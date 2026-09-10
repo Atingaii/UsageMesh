@@ -114,3 +114,89 @@ it("路由筛选在聚合与请求中使用同一规范值", async () => {
   expect(data.records[0].routeProvider).toBe(data.requests[0].routeProvider);
   expect(data.devices[0].costLowerBound).toBe(true);
 });
+
+describe("会话内账本缓存", () => {
+  it("相同账本只解密一次，保留用量引用并继续刷新独立心跳", async () => {
+    const { createDashboardLoadCache } = await import("../src/lib/data");
+    const cache = createDashboardLoadCache();
+    const responses: Record<string, unknown> = {
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": await encryptedLedger("aabb", key, {
+        generatedAt: "2026-09-07T02:00:00Z",
+        device: { id: "one", name: "Mac" },
+        rows: [{ date: "2026-09-07", costUsd: 3 }],
+        requests: [{ timestampMs: 100, costUsd: 3 }],
+      }),
+      "um-presence-aabb/presence.json": {
+        kind: "usagemesh-device-presence",
+        schemaVersion: 1,
+        deviceHash: "aabb",
+        updatedAt: "2026-09-07T03:00:00Z",
+      },
+    };
+    fetchResponses(responses);
+    const decrypt = vi.spyOn(crypto.subtle, "decrypt");
+    const first = await loadDashboardWithKey(repo, encoded, cache);
+    responses["um-presence-aabb/presence.json"] = {
+      kind: "usagemesh-device-presence",
+      schemaVersion: 1,
+      deviceHash: "aabb",
+      updatedAt: "2026-09-07T04:00:00Z",
+    };
+    const second = await loadDashboardWithKey(repo, encoded, cache);
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(second.records).toBe(first.records);
+    expect(second.requests).toBe(first.requests);
+    expect(second.pricing).toBe(first.pricing);
+    expect(second.devices[0].presenceAt).toBe("2026-09-07T04:00:00Z");
+    expect(first.devices[0].presenceAt).toBe("2026-09-07T03:00:00Z");
+
+    responses["um-ledger-aabb/ledger.json"] = await encryptedLedger(
+      "aabb",
+      key,
+      {
+        device: { id: "one", name: "Mac" },
+        rows: [{ costUsd: 7 }],
+      },
+    );
+    const updated = await loadDashboardWithKey(repo, encoded, cache);
+    expect(decrypt).toHaveBeenCalledTimes(2);
+    expect(updated.records).not.toBe(first.records);
+    expect(updated.records[0].cost).toBe(7);
+  });
+
+  it("损坏更新和错误密钥不能命中旧账本，移除的设备不留在缓存", async () => {
+    const { createDashboardLoadCache } = await import("../src/lib/data");
+    const cache = createDashboardLoadCache();
+    const envelope = await encryptedLedger("aabb", key, {
+      device: { id: "one" },
+    });
+    const responses: Record<string, unknown> = {
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": envelope,
+    };
+    fetchResponses(responses);
+    await loadDashboardWithKey(repo, encoded, cache);
+    responses["um-ledger-aabb/ledger.json"] = {
+      ...envelope,
+      ciphertext: "broken",
+    };
+    await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow(
+      "解密失败",
+    );
+    responses["um-ledger-aabb/ledger.json"] = envelope;
+    await expect(
+      loadDashboardWithKey(
+        repo,
+        Buffer.from(new Uint8Array(32).fill(8)).toString("base64url"),
+        cache,
+      ),
+    ).rejects.toThrow("解密失败");
+    expect(cache.ledgers.size).toBe(0);
+    await loadDashboardWithKey(repo, encoded, cache);
+    responses["um-index/index.json"] = { branches: [] };
+    const empty = await loadDashboardWithKey(repo, encoded, cache);
+    expect(empty.records).toEqual([]);
+    expect(cache.ledgers.size).toBe(0);
+  });
+});

@@ -1,5 +1,6 @@
 import type {
   DailyTrendPoint,
+  DynamicFilterOptions,
   FilterState,
   UsageRecord,
   RequestRecord,
@@ -66,19 +67,40 @@ export const COLORS = [
   "#4996be",
   "#8a8f9d",
 ];
+const numberFormatter = new Intl.NumberFormat("zh-CN");
+const compactFormatter = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+const moneyFormatters = new Map<number, Intl.NumberFormat>();
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+  hour12: false,
+});
+const labelCollator = new Intl.Collator("zh-CN", { numeric: true });
 export const number = (value: number) =>
-  Math.round(value).toLocaleString("zh-CN");
-export const compact = (value: number) =>
-  Intl.NumberFormat("en", {
-    notation: "compact",
-    maximumFractionDigits: 2,
-  }).format(value);
-export const money = (value: number, digits = 2) =>
-  `$${value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  numberFormatter.format(Math.round(value));
+export const compact = (value: number) => compactFormatter.format(value);
+export function money(value: number, digits = 2) {
+  let formatter = moneyFormatters.get(digits);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    moneyFormatters.set(digits, formatter);
+  }
+  return `$${formatter.format(value)}`;
+}
 export function dateTime(value: string | number) {
   const d = new Date(value);
   return value && Number.isFinite(d.getTime())
-    ? d.toLocaleString("zh-CN", { hour12: false })
+    ? dateTimeFormatter.format(d)
     : "尚无记录";
 }
 export function localDate(date: Date) {
@@ -99,43 +121,82 @@ export function filterError(filters: FilterState): string | null {
     return "请输入有效的日期和时间。";
   return start > end ? "结束时间不能早于开始时间。" : null;
 }
-export function inTimeRange(
-  row: { timestampMs: number; date: string },
+type DatedRow = { timestampMs: number; date: string };
+const dimensions = Object.keys(FILTER_LABELS) as Dimension[];
+function createTimePredicate(
   filters: FilterState,
-  now = new Date(),
-): boolean {
-  const date = rowDate(row),
-    today = localDate(now);
-  if (filters.timeRange === "all") return true;
-  if (filters.timeRange === "today") return date === today;
+  now: Date,
+): (row: DatedRow) => boolean {
+  if (filters.timeRange === "all") return () => true;
+  const today = localDate(now);
+  if (filters.timeRange === "today") return (row) => rowDate(row) === today;
   if (filters.timeRange === "7d" || filters.timeRange === "30d") {
     const start = new Date(now);
     start.setDate(start.getDate() - (filters.timeRange === "7d" ? 6 : 29));
-    return date >= localDate(start) && date <= today;
+    const firstDay = localDate(start);
+    return (row) => {
+      const date = rowDate(row);
+      return date >= firstDay && date <= today;
+    };
   }
-  if (filters.timeRange === "month")
-    return date.startsWith(today.slice(0, 7)) && date <= today;
-  if (filterError(filters)) return false;
-  if (row.timestampMs > 0)
-    return (
-      row.timestampMs >= new Date(filters.customStartDate!).getTime() &&
-      row.timestampMs <= new Date(filters.customEndDate!).getTime() + 59_999
-    );
-  return (
-    date >= filters.customStartDate!.slice(0, 10) &&
-    date <= filters.customEndDate!.slice(0, 10)
-  );
+  if (filters.timeRange === "month") {
+    const month = today.slice(0, 7);
+    return (row) => {
+      const date = rowDate(row);
+      return date.startsWith(month) && date <= today;
+    };
+  }
+  if (filterError(filters)) return () => false;
+  const start = new Date(filters.customStartDate!).getTime();
+  const end = new Date(filters.customEndDate!).getTime() + 59_999;
+  const firstDay = filters.customStartDate!.slice(0, 10);
+  const lastDay = filters.customEndDate!.slice(0, 10);
+  return (row) => {
+    if (row.timestampMs > 0)
+      return row.timestampMs >= start && row.timestampMs <= end;
+    const date = rowDate(row);
+    return date >= firstDay && date <= lastDay;
+  };
+}
+export function inTimeRange(
+  row: DatedRow,
+  filters: FilterState,
+  now = new Date(),
+): boolean {
+  return createTimePredicate(filters, now)(row);
+}
+// Compile once for a whole snapshot: date boundaries and active dimensions do
+// not vary between rows. "All time" never needs to parse timestamps.
+export function createFilterPredicate(filters: FilterState, now = new Date()) {
+  const timeMatches = createTimePredicate(filters, now);
+  const active = dimensions
+    .filter((key) => filters[key] !== "all")
+    .map((key) => [key, filters[key]] as const);
+  return (row: UsageRecord | RequestRecord): boolean =>
+    active.every(([key, value]) => row[key] === value) && timeMatches(row);
 }
 export function matchesFilters(
   row: UsageRecord | RequestRecord,
   filters: FilterState,
 ): boolean {
-  return (
-    inTimeRange(row, filters) &&
-    (Object.keys(FILTER_LABELS) as Dimension[]).every(
-      (key) => filters[key] === "all" || row[key] === filters[key],
-    )
-  );
+  return createFilterPredicate(filters)(row);
+}
+export function filterOptions(
+  records: UsageRecord[],
+  requests: RequestRecord[],
+): DynamicFilterOptions {
+  const values = Object.fromEntries(
+    dimensions.map((key) => [key, new Set<string>()]),
+  ) as Record<Dimension, Set<string>>;
+  for (const rows of [records, requests])
+    for (const row of rows)
+      for (const key of dimensions) if (row[key]) values[key].add(row[key]);
+  return Object.fromEntries(
+    dimensions.map((key) => [
+      key,
+      [...values[key]].sort(labelCollator.compare),
+    ]),
+  ) as unknown as DynamicFilterOptions;
 }
 export function sum(rows: UsageRecord[], metric: Metric) {
   return rows.reduce((result, row) => result + row[metric], 0);

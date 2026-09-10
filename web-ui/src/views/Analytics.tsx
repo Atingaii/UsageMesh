@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { RequestRecord, UsageRecord } from "../lib/types";
 import {
   COLORS,
@@ -15,7 +15,7 @@ import {
 import { Badge, EmptyState, Section } from "../components/ui";
 import { UsageTable } from "../components/UsageTable";
 
-export function Analytics({
+export const Analytics = memo(function Analytics({
   records,
   requests,
 }: {
@@ -324,4 +324,4 @@ export function Analytics({
       </Section>
     </div>
   );
-}
+});

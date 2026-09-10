@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { DashboardDataset } from "../lib/types";
 import { dateTime } from "../lib/analytics";
 import { dataQuality } from "../lib/insights";
@@ -9,7 +10,7 @@ export function DataQuality({
   dataset: DashboardDataset;
   onInspect?: () => void;
 }) {
-  const quality = dataQuality(dataset);
+  const quality = useMemo(() => dataQuality(dataset), [dataset]);
   const items = [
     {
       title: "账本读取",

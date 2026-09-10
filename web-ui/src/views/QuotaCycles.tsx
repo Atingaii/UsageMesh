@@ -1,5 +1,15 @@
-import { useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import "./subscriptions.css";
+import { memo, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Clock3,
+  Download,
+  History,
+  Layers3,
+  Monitor,
+  ChevronDown,
+} from "lucide-react";
 import {
   compact,
   dateTime,
@@ -9,103 +19,83 @@ import {
 } from "../lib/analytics";
 import {
   aggregateQuotaCycle,
-  displayQuotaCycles,
-  fullQuotaWindow,
-  quotaCycleStatus,
   forecastCycleCost,
   formatWindowDuration,
+  type CycleAggregation,
   type CycleGroup,
 } from "../lib/quotaCycles";
-import type { DashboardDataset, OfficialQuotaCycle } from "../lib/types";
-import { Badge, EmptyState, Section } from "../components/ui";
-import { QuotaCapacityScenario } from "../components/QuotaCapacityScenario";
 import {
-  forecastQuotaCycle,
-  type QuotaForecast,
-} from "../../../rust-cli/local-web/quota-forecast.js";
+  currentSubscriptions,
+  hasConflictingAccounts,
+  subscriptionHistory,
+  type SubscriptionWindow,
+} from "../lib/subscriptions";
+import type { DashboardDataset, OfficialQuotaCycle } from "../lib/types";
+import { Badge, EmptyState } from "../components/ui";
+import { forecastQuotaCycle } from "../../../rust-cli/local-web/quota-forecast.js";
 
-function cycleLabel(cycle: OfficialQuotaCycle): string {
-  const reset = new Date(cycle.resetsAt).toLocaleString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const accountSuffix = cycle.accountKey.replace(/[^a-z0-9]/gi, "").slice(-6);
-  return `${cycle.limitName} · ${formatWindowDuration(cycle.windowMinutes)} · ${reset} 重置${accountSuffix ? ` · ${accountSuffix}` : ""}`;
+const dateFormat = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const zone = localZone === "Asia/Shanghai" ? "北京时间" : localZone;
+function date(value: string | number | null) {
+  const ms = typeof value === "number" ? value : Date.parse(value || "");
+  return Number.isFinite(ms) ? dateFormat.format(ms) : "尚未提供";
 }
-
-function resetSummary(resetsAt: string): string {
-  const resetMs = Date.parse(resetsAt);
-  if (!Number.isFinite(resetMs)) return dateTime(resetsAt);
-  const remainingMs = resetMs - Date.now();
-  if (remainingMs <= 0) return `已于 ${dateTime(resetMs)} 重置`;
-  const totalMinutes = Math.ceil(remainingMs / 60_000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  const relative =
-    days > 0
-      ? `${days} 天 ${hours} 小时后重置`
-      : hours > 0
-        ? `${hours} 小时 ${minutes} 分钟后重置`
-        : `${minutes} 分钟后重置`;
-  return `${relative} · ${dateTime(resetMs)}`;
+function countdown(value: string | null, now: number) {
+  const delta = Date.parse(value || "") - now;
+  if (!Number.isFinite(delta)) return "等待重置时间";
+  if (delta <= 0) return "等待重置后更新";
+  const minutes = Math.ceil(delta / 60000),
+    days = Math.floor(minutes / 1440),
+    hours = Math.floor((minutes % 1440) / 60);
+  return days
+    ? `${days} 天 ${hours} 小时后重置`
+    : hours
+      ? `${hours} 小时 ${minutes % 60} 分钟后重置`
+      : `${minutes} 分钟后重置`;
 }
-
-function accountLabel(account: string, accountKey: string): string {
-  const suffix = accountKey.replace(/[^a-z0-9]/gi, "").slice(-6);
-  return suffix ? `${account} · ${suffix}` : account;
+function windowTitle(item: SubscriptionWindow) {
+  return `${item.snapshot.limitName || item.snapshot.limitId} · ${formatWindowDuration(item.window.windowMinutes)}`;
 }
-
-function usageStatus(status: "observed" | "stale" | "unavailable") {
-  if (status === "observed")
-    return { label: "已观测", tone: "success" as const };
-  if (status === "stale")
-    return { label: "过期快照", tone: "warning" as const };
-  return { label: "暂不可用", tone: "warning" as const };
+function Meter({ value, label }: { value: number; label: string }) {
+  const bounded = Math.max(0, Math.min(100, value));
+  return (
+    <div
+      className="sub-meter"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={bounded}
+    >
+      <span style={{ width: `${bounded}%` }} />
+    </div>
+  );
 }
-
-function cycleValue(cycle: OfficialQuotaCycle): string {
-  return JSON.stringify([
-    cycle.accountKey,
-    cycle.limitId,
-    cycle.windowName,
-    cycle.windowMinutes,
-    cycle.resetsAt,
-    cycle.segment,
-  ]);
-}
-
-function exportCycleCsv(
-  cycle: OfficialQuotaCycle,
-  rows: ReturnType<typeof aggregateQuotaCycle>["rows"],
-): void {
-  const columns = [
-    "口径",
-    "周期 ID",
-    "账户",
-    "额度类别",
-    "窗口",
-    "桶开始时间",
-    "设备",
-    "模型",
-    "Tokens",
-    "请求数",
-    "估算费用 USD",
-  ];
+function exportRows(cycle: OfficialQuotaCycle, result: CycleAggregation) {
   downloadCsv(
-    `usagemesh-official-cycle-${cycle.id}.csv`,
-    columns,
-    rows.map((row) => [
-      "同期官方订阅用量",
-      cycle.id,
-      accountLabel(cycle.account, cycle.accountKey),
-      cycle.limitName,
-      cycle.windowName,
-      new Date(row.timestampMs).toISOString(),
+    `subscription-${cycle.resetsAt.slice(0, 10)}.csv`,
+    [
+      "周期开始",
+      "周期重置",
+      "设备",
+      "时间",
+      "模型",
+      "Tokens",
+      "请求",
+      "API 等价金额",
+    ],
+    result.rows.map((row) => [
+      dateTime(result.bounds.from),
+      dateTime(result.bounds.to),
       row.device,
+      dateTime(row.timestampMs),
       row.model,
       row.totalTokens,
       row.requestsCount,
@@ -113,776 +103,509 @@ function exportCycleCsv(
     ]),
   );
 }
-
 function Ranking({ title, rows }: { title: string; rows: CycleGroup[] }) {
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   return (
-    <Section
-      title={title}
-      action={<span className="muted small">按 Tokens 排序</span>}
-    >
+    <section className="sub-ranking">
+      <h3>{title}</h3>
       {rows.length ? (
-        <div className="cycle-ranking">
-          {rows.slice(0, 10).map((row) => (
-            <div className="cycle-ranking-row" key={row.name}>
-              <span title={row.name}>{row.name}</span>
-              <div className="progress-track">
-                <div
-                  style={{
-                    width: `${total ? (row.tokens / total) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-              <strong>{compact(row.tokens)}</strong>
-              <small>
-                {total ? ((row.tokens / total) * 100).toFixed(1) : "0.0"}%
-              </small>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          title="这个周期暂无已确认分钟桶"
-          description="已读取设备中没有落在完整窗口内的官方订阅分钟数据。"
-        />
-      )}
-    </Section>
-  );
-}
-
-const FORECAST_REASON: Record<string, string> = {
-  "no-samples": "等待第一个非零官方观测",
-  "one-sample": "至少需要两个不同时间的观测才能计算速度",
-  "zero-span": "观测时间跨度不足",
-  "early-window": "窗口尚处早期，趋势可能快速变化",
-  "flat-usage": "近段官方比例没有明显增长",
-  "stale-snapshot": "官方快照已超过 15 分钟，当前耗尽预测已隐藏",
-  "invalid-window": "窗口时间或时长无效",
-  "short-span": "观测跨度不足 10 分钟",
-  "insufficient-change": "官方比例增长不足 1 个百分点",
-  "rapid-jump": "检测到短时突增，保留样本但降低趋势评分",
-  "low-confidence": "样本拟合或覆盖不足，暂按低评分趋势展示",
-};
-
-function percent(value: number | null, digits = 1): string {
-  return value == null ? "—" : `${value.toFixed(digits)}%`;
-}
-
-function forecastState(forecast: QuotaForecast): string {
-  if (forecast.state === "ready") return "趋势可用";
-  if (forecast.state === "expired") return "历史周期";
-  if (forecast.state === "invalid") return "窗口无效";
-  return forecast.reason
-    ? FORECAST_REASON[forecast.reason] || "样本不足"
-    : "样本不足";
-}
-
-function linePoints(series: QuotaForecast["series"]): string {
-  return series
-    .map(
-      (point) =>
-        `${40 + point.progress * 620},${150 - point.usedPercent * 1.2}`,
-    )
-    .join(" ");
-}
-
-function ForecastPanel({ forecast }: { forecast: QuotaForecast }) {
-  const hasUsableForecast =
-    forecast.state === "ready" &&
-    forecast.recent.ratePercentPerHour != null &&
-    !forecast.latest.isStale;
-  if (!hasUsableForecast) {
-    return (
-      <div className="quota-forecast quota-forecast-empty">
-        <strong>耗尽预测暂不可用</strong>
-        <span>
-          {forecast.state === "expired"
-            ? "该观测片段已结束，暂不预测耗尽时间。"
-            : forecast.state === "invalid"
-              ? "周期窗口信息无效，暂不预测耗尽时间。"
-              : forecast.reason === "stale-snapshot"
-                ? "官方快照已过期，暂不预测耗尽时间。"
-                : "正在积累观测，暂不预测耗尽时间。"}
-        </span>
-      </div>
-    );
-  }
-  const projection = forecast.projection;
-  const latest = forecast.series.at(-1);
-  const projectionEndProgress =
-    latest &&
-    projection.usedPercentAtReset != null &&
-    projection.usedPercentAtReset > 100 &&
-    projection.usedPercentAtReset > latest.usedPercent
-      ? latest.progress +
-        (1 - latest.progress) *
-          ((100 - latest.usedPercent) /
-            (projection.usedPercentAtReset - latest.usedPercent))
-      : 1;
-  const projectionPoints =
-    latest && projection.usedPercentAtReset != null
-      ? `${40 + latest.progress * 620},${150 - latest.usedPercent * 1.2} ${40 + projectionEndProgress * 620},${150 - Math.min(100, projection.usedPercentAtReset) * 1.2}`
-      : "";
-  const cards = [
-    [
-      "近段消耗速度",
-      forecast.recent.ratePercentPerHour == null
-        ? "—"
-        : forecast.recent.ratePercentPerHour.toFixed(2),
-      forecast.recent.spanMs == null
-        ? "等待更多观测"
-        : `覆盖 ${Math.round(forecast.recent.spanMs / 60_000)} 分钟 · 趋势评分 ${(forecast.recent.confidence * 100).toFixed(0)}/100`,
-      "百分点 / 小时",
-    ],
-    [
-      "预计重置时已用",
-      percent(projection.usedPercentAtReset),
-      "线性外推可超过 100%，表示可能提前耗尽",
-    ],
-    [
-      "预计耗尽时间",
-      projection.reaches100AtMs == null
-        ? "—"
-        : projection.exhaustsBeforeReset
-          ? dateTime(projection.reaches100AtMs)
-          : "重置后",
-      forecast.latest.isStale
-        ? "快照过期，当前耗尽预测已隐藏"
-        : "仅按当前近段速度估算",
-    ],
-    [
-      "剩余额度可持续速度",
-      projection.sustainableRatePercentPerHour == null
-        ? "—"
-        : projection.sustainableRatePercentPerHour.toFixed(2),
-      projection.speedRatio == null
-        ? "以最新官方比例与重置时间计算"
-        : `当前约为可持续速度的 ${projection.speedRatio.toFixed(2)}×`,
-      "百分点 / 小时",
-    ],
-  ];
-  return (
-    <section className="quota-forecast">
-      <div className="quota-forecast-head">
-        <div>
-          <h2>额度节奏与耗尽预测</h2>
-          <p>基于官方已用比例观测，不用跨设备 Tokens 推导额度。</p>
-        </div>
-        <Badge tone="success">{forecastState(forecast)}</Badge>
-      </div>
-      <div className="quota-forecast-metrics">
-        {cards.map(([label, value, note, unit]) => (
-          <div className="quota-forecast-metric" key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            {unit && <small>{unit}</small>}
-            <small>{note}</small>
+        rows.slice(0, 8).map((row) => (
+          <div className="sub-rank-row" key={row.name}>
+            <span title={row.name}>{row.name}</span>
+            <Meter
+              value={total ? (row.tokens / total) * 100 : 0}
+              label={`${row.name} Tokens 占比`}
+            />
+            <strong>{compact(row.tokens)}</strong>
           </div>
-        ))}
-      </div>
-      <div className="quota-forecast-chart">
-        <svg
-          viewBox="0 0 700 180"
-          width="100%"
-          role="img"
-          aria-label="当前周期官方比例、理想节奏和线性预测"
-          style={{ display: "block", minHeight: 190 }}
-        >
-          {[0, 25, 50, 75, 100].map((value) => (
-            <g key={value}>
-              <line
-                x1="40"
-                x2="660"
-                y1={150 - value * 1.2}
-                y2={150 - value * 1.2}
-                stroke="var(--border-subtle)"
-              />
-              <text
-                x="32"
-                y={154 - value * 1.2}
-                textAnchor="end"
-                fill="var(--text-muted)"
-                fontSize="10"
-              >
-                {value}%
-              </text>
-            </g>
-          ))}
-          <line
-            x1="40"
-            y1="150"
-            x2="660"
-            y2="30"
-            stroke="var(--text-muted)"
-            strokeDasharray="5 5"
-            opacity="0.65"
-          />
-          {forecast.series.length > 1 ? (
-            <polyline
-              points={linePoints(forecast.series)}
-              fill="none"
-              stroke="var(--primary)"
-              strokeWidth="3"
-              strokeLinejoin="round"
-            />
-          ) : null}
-          {latest ? (
-            <circle
-              cx={40 + latest.progress * 620}
-              cy={150 - latest.usedPercent * 1.2}
-              r="4"
-              fill="var(--primary)"
-            />
-          ) : null}
-          {projectionPoints ? (
-            <polyline
-              points={projectionPoints}
-              fill="none"
-              stroke="var(--amber)"
-              strokeWidth="2"
-              strokeDasharray="7 5"
-            />
-          ) : null}
-          <text x="40" y="174" fill="var(--text-muted)" fontSize="10">
-            周期起点
-          </text>
-          <text
-            x="660"
-            y="174"
-            textAnchor="end"
-            fill="var(--text-muted)"
-            fontSize="10"
-          >
-            重置
-          </text>
-        </svg>
-        <p className="muted small">
-          实线为官方观测，灰色虚线为均匀节奏，黄色虚线为近段速度外推。
-          {forecast.reason ? ` ${FORECAST_REASON[forecast.reason] || ""}` : ""}
-          {forecast.recent.spanMs != null
-            ? " 趋势评分由样本数量、时间覆盖和线性拟合共同计算，是启发式评分。"
-            : ""}
-        </p>
-      </div>
+        ))
+      ) : (
+        <p className="sub-muted">暂无记录</p>
+      )}
     </section>
   );
 }
-
-function HistoricalPaceChart({
-  cycles,
-  selected,
+function UsageDetails({
+  result,
+  cycle,
 }: {
-  cycles: OfficialQuotaCycle[];
-  selected: OfficialQuotaCycle;
+  result: CycleAggregation;
+  cycle: OfficialQuotaCycle;
 }) {
-  const comparableByReset = new Map<
-    string,
-    { cycle: OfficialQuotaCycle; forecast: QuotaForecast }
-  >();
-  cycles
-    .filter(
-      (cycle) =>
-        cycle.accountKey === selected.accountKey &&
-        cycle.limitId === selected.limitId &&
-        cycle.windowName === selected.windowName &&
-        cycle.windowMinutes === selected.windowMinutes,
-    )
-    .forEach((cycle) => {
-      const forecast = forecastQuotaCycle(cycle);
-      if (
-        forecast.series.length > 1 &&
-        !comparableByReset.has(cycle.resetsAt)
-      ) {
-        comparableByReset.set(cycle.resetsAt, { cycle, forecast });
-      }
-    });
-  const comparable = [...comparableByReset.values()].slice(0, 6);
-  if (comparable.length < 2) return null;
   return (
-    <Section
-      title="历史周期节奏"
-      subtitle="按周期进度对齐最近观测；历史末次观测不代表最终值。"
-      action={
-        <span className="muted small">{comparable.length} 个可比周期</span>
-      }
-    >
-      <div style={{ padding: "8px 20px 18px" }}>
-        <svg
-          viewBox="0 0 700 180"
-          width="100%"
-          role="img"
-          aria-label="历史周期官方额度节奏"
-          style={{ display: "block", minHeight: 190 }}
-        >
-          <line
-            x1="40"
-            y1="150"
-            x2="660"
-            y2="30"
-            stroke="var(--text-muted)"
-            strokeDasharray="5 5"
-            opacity="0.55"
-          />
-          {comparable.map(({ cycle, forecast }, index) =>
-            forecast.series.length > 1 ? (
-              <polyline
-                key={`${cycle.id}:${cycle.segment}`}
-                points={linePoints(forecast.series)}
-                fill="none"
-                stroke={
-                  cycle.id === selected.id && cycle.segment === selected.segment
-                    ? "var(--primary)"
-                    : "var(--text-muted)"
-                }
-                strokeWidth={
-                  cycle.id === selected.id && cycle.segment === selected.segment
-                    ? 3
-                    : 1.5
-                }
-                opacity={
-                  cycle.id === selected.id && cycle.segment === selected.segment
-                    ? 1
-                    : Math.max(0.2, 0.65 - index * 0.07)
-                }
-              />
-            ) : null,
-          )}
-          <text x="40" y="174" fill="var(--text-muted)" fontSize="10">
-            0%
-          </text>
-          <text
-            x="660"
-            y="174"
-            textAnchor="end"
-            fill="var(--text-muted)"
-            fontSize="10"
-          >
-            100% 周期时间
-          </text>
-        </svg>
+    <div className="sub-detail-body">
+      <div className="sub-rankings">
+        <Ranking title="设备用量" rows={result.devices} />
+        <Ranking title="模型用量" rows={result.models} />
       </div>
-    </Section>
-  );
-}
-
-function LatestQuotaList({ dataset }: { dataset: DashboardDataset }) {
-  const latest = dataset.officialQuota?.latest || [];
-  return (
-    <div className="view-stack">
-      <p className="notice">
-        官方额度已同步，尚无非零消耗周期。0%
-        滑动窗口只保留最新事实，不生成预测历史。
+      <p className="sub-muted">
+        统计范围：{dateTime(result.bounds.from)} — {dateTime(result.bounds.to)}
+        。仅汇总 Codex
+        官方订阅的完整分钟记录，跨设备按时间聚合，尚未核实每条记录的账号归属。
       </p>
-      <Section title="最新官方额度" subtitle="来自 Codex App Server 的最近观测">
-        <div
-          className="table-scroll"
-          tabIndex={0}
-          role="region"
-          aria-label="最新官方额度"
-        >
-          <table>
-            <thead>
-              <tr>
-                <th>账户</th>
-                <th>额度类别</th>
-                <th>窗口</th>
-                <th className="numeric">已用</th>
-                <th>重置时间</th>
-                <th>更新时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latest.flatMap((snapshot) =>
-                snapshot.windows.map((window) => (
-                  <tr
-                    key={`${snapshot.accountKey}:${snapshot.limitId}:${window.name}`}
-                  >
-                    <td>
-                      {accountLabel(snapshot.account, snapshot.accountKey)}
-                    </td>
-                    <td>{snapshot.limitName}</td>
-                    <td>
-                      {window.name} ·{" "}
-                      {formatWindowDuration(window.windowMinutes)}
-                    </td>
-                    <td className="numeric">
-                      {window.usedPercent.toFixed(1)}%
-                    </td>
-                    <td>{window.resetsAt ? dateTime(window.resetsAt) : "—"}</td>
-                    <td>{dateTime(snapshot.updatedAt)}</td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Section>
+      {(result.boundaryBuckets > 0 || result.legacyBuckets > 0) && (
+        <p className="sub-muted">
+          已排除 {number(result.boundaryBuckets)} 个跨边界分钟桶及{" "}
+          {number(result.legacyBuckets)} 个仅有日期的记录。
+        </p>
+      )}
+      <button
+        className="button secondary"
+        onClick={() => exportRows(cycle, result)}
+      >
+        <Download size={16} />
+        导出本周期 CSV
+      </button>
     </div>
   );
 }
-
-export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
-  const cycles = useMemo(
+function CurrentWindow({
+  item,
+  dataset,
+  now,
+  multipleAccounts,
+}: {
+  item: SubscriptionWindow;
+  dataset: DashboardDataset;
+  now: number;
+  multipleAccounts: boolean;
+}) {
+  const [details, setDetails] = useState(false);
+  const result = useMemo(
     () =>
-      displayQuotaCycles(dataset.officialQuota?.cycles || []).sort(
-        (a, b) =>
-          Number(
-            quotaCycleStatus(b, dataset.officialQuota?.latest || []) ===
-              "current",
-          ) -
-          Number(
-            quotaCycleStatus(a, dataset.officialQuota?.latest || []) ===
-              "current",
-          ),
-      ),
-    [dataset.officialQuota],
+      item.cycle ? aggregateQuotaCycle(dataset.records, item.cycle) : null,
+    [dataset.records, item.cycle],
   );
-  const [selectedId, setSelectedId] = useState(() =>
-    cycles[0] ? cycleValue(cycles[0]) : "",
+  const estimate = useMemo(
+    () =>
+      result
+        ? forecastCycleCost(
+            result,
+            item.window.usedPercent,
+            item.snapshot.updatedAt,
+            dataset.lastSync,
+          )
+        : null,
+    [
+      result,
+      item.window.usedPercent,
+      item.snapshot.updatedAt,
+      dataset.lastSync,
+    ],
   );
-  const selected =
-    cycles.find((cycle) => cycleValue(cycle) === selectedId) || cycles[0];
+  const partialCoverage = useMemo(() => {
+    if (!result) return false;
+    const ids = new Set(result.rows.map((row) => row.deviceId));
+    const asOf = Date.parse(item.snapshot.updatedAt);
+    return (
+      dataset.devices.length < dataset.expectedDevices ||
+      dataset.devices.some(
+        (device) =>
+          ids.has(device.id) &&
+          (!Number.isFinite(Date.parse(device.lastSync)) ||
+            Date.parse(device.lastSync) < asOf - 60_000),
+      )
+    );
+  }, [
+    result,
+    dataset.devices,
+    dataset.expectedDevices,
+    item.snapshot.updatedAt,
+  ]);
+  const forecast = useMemo(
+    () => (item.cycle ? forecastQuotaCycle(item.cycle) : null),
+    [item.cycle],
+  );
+  const snapshotTime = Date.parse(item.snapshot.updatedAt);
+  const expired = Date.parse(item.window.resetsAt || "") <= now;
+  const stale =
+    !Number.isFinite(snapshotTime) ||
+    now - snapshotTime > 15 * 60000 ||
+    snapshotTime > now;
+  const used = item.window.usedPercent,
+    remaining = Math.max(0, 100 - used);
+  const supported = item.snapshot.limitId === "codex";
+  const value =
+    !stale && !expired && !multipleAccounts && supported ? estimate : null;
+  const unavailable = expired
+    ? "等待重置后的官方快照"
+    : stale
+      ? "官方快照已过期，等待同步"
+      : used === 0
+        ? "额度尚未使用，暂无法估算"
+        : multipleAccounts
+          ? "存在多个账号，暂不混算金额"
+          : !supported
+            ? "该额度类别尚无独立金额记录"
+            : !result?.rows.length
+              ? "等待本周期用量记录"
+              : Date.parse(dataset.lastSync) < snapshotTime
+                ? "等待账本同步到额度观测时刻"
+                : "暂无可用于估算的计价记录";
+  const pace =
+    !stale &&
+    !expired &&
+    forecast?.state === "ready" &&
+    !forecast.latest.isStale
+      ? forecast.projection.reaches100AtMs != null &&
+        forecast.projection.reaches100AtMs <
+          Date.parse(item.window.resetsAt || "")
+        ? `按近期速度，预计 ${date(forecast.projection.reaches100AtMs)} 耗尽`
+        : "按近期速度，预计可用至重置"
+      : null;
+  return (
+    <div className="sub-current">
+      <div className="sub-primary-grid">
+        <section className="sub-panel sub-quota" aria-label="当前官方额度">
+          <div className="sub-panel-head">
+            <div>
+              <p className="sub-overline">当前订阅</p>
+              <h2>{windowTitle(item)}</h2>
+              <p className="sub-muted">
+                {item.snapshot.account} · {item.snapshot.accountKey.slice(-6)}
+              </p>
+            </div>
+            <Badge tone={stale || expired ? "warning" : "success"}>
+              {expired ? "等待更新" : stale ? "快照过期" : "已同步"}
+            </Badge>
+          </div>
+          <div className="sub-remaining">
+            <strong>
+              {remaining.toFixed(0)}
+              <span>%</span>
+            </strong>
+            <div>
+              <span>{stale || expired ? "末次剩余" : "额度剩余"}</span>
+              <small>已用 {used.toFixed(1)}%</small>
+            </div>
+          </div>
+          <Meter value={remaining} label="官方额度剩余比例" />
+          <div className="sub-reset">
+            <Clock3 size={17} />
+            <div>
+              <strong>{countdown(item.window.resetsAt, now)}</strong>
+              <span>
+                {date(item.window.resetsAt)} · {zone}
+              </span>
+            </div>
+          </div>
+          {pace && (
+            <p className="sub-pace">
+              <ArrowUpRight size={16} />
+              {pace}
+            </p>
+          )}
+          <p className="sub-updated">
+            官方观测于 {date(item.snapshot.updatedAt)}
+            {stale ? " · 仅供历史参考" : ""}
+          </p>
+        </section>
+        <section className="sub-panel sub-value" aria-label="周期金额估算">
+          <div className="sub-panel-head">
+            <div>
+              <p className="sub-overline">按额度比例换算</p>
+              <h2>本周期总金额估算</h2>
+            </div>
+            <span className="sub-unit">API 等价 · USD</span>
+          </div>
+          <div className="sub-value-total">
+            {value ? (
+              <>
+                <span>≈</span> {money(value.total)}
+              </>
+            ) : (
+              "—"
+            )}
+          </div>
+          <p className="sub-value-caption">
+            {value ? "按当前任务结构，折算到 100% 额度" : unavailable}
+          </p>
+          <div className="sub-value-split">
+            <div>
+              <span>已记录金额</span>
+              <strong>
+                {value
+                  ? money(value.recorded)
+                  : result
+                    ? money(result.cost)
+                    : "—"}
+              </strong>
+            </div>
+            <div>
+              <span>剩余额度估算</span>
+              <strong>{value ? `≈ ${money(value.remaining)}` : "—"}</strong>
+            </div>
+          </div>
+          <div className="sub-formula">
+            {value
+              ? `${money(value.recorded)} ÷ ${number(value.usedPercent)} × 100 = ${money(value.total)}`
+              : "总金额 = 已用金额 ÷ 已用额度百分点 × 100"}
+          </div>
+          <p className="sub-muted sub-value-note">
+            {value?.partialPricing ? "部分记录未完成计价。" : ""}
+            {used > 0 && used < 5 ? "额度用量较少，估算波动可能较大。" : ""}
+            金额按工作区同期官方订阅记录估算，非实际账单。
+            {partialCoverage && "部分设备账本未齐，估算可能偏低。"}
+            {value && <>金额截止 {date(value.asOf)}。</>}
+          </p>
+        </section>
+      </div>
+      <section className="sub-panel sub-activity">
+        <div className="sub-panel-head">
+          <div>
+            <h2>本周期用量</h2>
+            <p className="sub-muted">
+              跨设备汇总 ·{" "}
+              {item.cycle
+                ? `${date(item.cycle.nominalStartAt)} — ${date(item.cycle.resetsAt)}`
+                : "等待官方周期范围"}
+            </p>
+          </div>
+          <span className="sub-device-status">
+            <Monitor size={16} />
+            {dataset.devices.length} / {dataset.expectedDevices} 台已读取
+          </span>
+        </div>
+        <div className="sub-stat-grid">
+          <div>
+            <span>Tokens</span>
+            <strong>{result ? compact(result.totalTokens) : "—"}</strong>
+          </div>
+          <div>
+            <span>请求次数</span>
+            <strong>{result ? number(result.requests) : "—"}</strong>
+          </div>
+          <div>
+            <span>参与设备</span>
+            <strong>{result ? number(result.deviceCount) : "—"}</strong>
+          </div>
+        </div>
+        {result && item.cycle && (
+          <>
+            <button
+              className="sub-disclosure"
+              aria-expanded={details}
+              onClick={() => setDetails(!details)}
+            >
+              <Layers3 size={16} />
+              用量明细与统计口径
+              <ChevronDown size={16} className={details ? "is-open" : ""} />
+            </button>
+            {details && <UsageDetails result={result} cycle={item.cycle} />}
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+function HistoryView({
+  dataset,
+  current,
+  now,
+}: {
+  dataset: DashboardDataset;
+  current: SubscriptionWindow[];
+  now: number;
+}) {
+  const history = useMemo(
+    () => subscriptionHistory(dataset.officialQuota, current, now),
+    [dataset.officialQuota, current, now],
+  );
+  const [page, setPage] = useState(0),
+    [selected, setSelected] = useState<OfficialQuotaCycle | null>(null);
   const result = useMemo(
     () =>
       selected
-        ? aggregateQuotaCycle(dataset.records, fullQuotaWindow(selected))
+        ? aggregateQuotaCycle(dataset.records, { ...selected, segment: 0 })
         : null,
     [dataset.records, selected],
   );
-  const forecast = useMemo(
-    () => (selected ? forecastQuotaCycle(selected) : null),
-    [selected],
-  );
-  if (!dataset.officialQuota) {
+  const count = Math.max(1, Math.ceil(history.length / 12));
+  const safePage = Math.min(page, count - 1);
+  if (!history.length)
     return (
       <EmptyState
-        title="尚未读取到官方订阅周期"
-        description="请至少在一台设备升级 UsageMesh CLI 后执行 sync。周期元数据出现后，本页会同时汇总其他已读取设备已有的官方订阅分钟数据。"
+        title="暂无历史周期"
+        description="周期结束或官方窗口发生变更后，历史记录会显示在这里。"
       />
     );
-  }
-  if (!cycles.length) {
-    if (dataset.officialQuota.latest.length)
-      return <LatestQuotaList dataset={dataset} />;
+  if (selected && result)
     return (
-      <EmptyState
-        title="官方额度已同步，暂无可展示窗口"
-        description="当前同步结果没有有效的官方窗口或非零消耗周期，请稍后再次同步。"
-      />
-    );
-  }
-  if (!selected || !result) return null;
-  const exactSnapshot = dataset.officialQuota.latest
-    .filter(
-      (snapshot) =>
-        snapshot.accountKey === selected.accountKey &&
-        snapshot.limitId === selected.limitId,
-    )
-    .flatMap((snapshot) =>
-      snapshot.windows
-        .filter(
-          (window) =>
-            window.name === selected.windowName &&
-            window.windowMinutes === selected.windowMinutes &&
-            Math.abs(
-              Date.parse(window.resetsAt || "") - Date.parse(selected.resetsAt),
-            ) <= 5_000,
-        )
-        .map((window) => ({ snapshot, window })),
-    )
-    .sort(
-      (a, b) =>
-        Date.parse(b.snapshot.updatedAt) - Date.parse(a.snapshot.updatedAt),
-    )[0];
-  const status = quotaCycleStatus(selected, dataset.officialQuota.latest);
-  const replaced = status === "replaced";
-  const expired = result.bounds.to <= Date.now();
-  const exactUpdatedMs = exactSnapshot
-    ? Date.parse(exactSnapshot.snapshot.updatedAt)
-    : Number.NaN;
-  const snapshotStale =
-    exactSnapshot?.snapshot.status !== "observed" ||
-    !Number.isFinite(exactUpdatedMs) ||
-    Date.now() - exactUpdatedMs > 15 * 60_000;
-  const historicalObservation = expired || snapshotStale;
-  const observedUsedPercent = exactSnapshot
-    ? exactSnapshot.window.usedPercent
-    : selected.lastUsedPercent;
-  const observedRemainingPercent = exactSnapshot
-    ? exactSnapshot.window.remainingPercent
-    : Math.max(0, 100 - selected.lastUsedPercent);
-  const observedAt = exactSnapshot
-    ? exactSnapshot.snapshot.updatedAt
-    : selected.lastObservedAt;
-  const boundedRemainingPercent = Math.max(
-    0,
-    Math.min(100, observedRemainingPercent),
-  );
-  const costForecast = replaced
-    ? null
-    : forecastCycleCost(result, dataset.lastSync);
-  const stats = [
-    {
-      label: "Tokens",
-      value: compact(result.totalTokens),
-      note: "",
-    },
-    {
-      label: "请求",
-      value: number(result.requests),
-      note: "",
-    },
-    {
-      label: "本周期预计总金额",
-      value: costForecast ? `≈ ${money(costForecast.total)}` : "—",
-      note: costForecast
-        ? `API 等价估算，非账单${costForecast.partialPricing ? " · 部分计价" : ""}`
-        : replaced
-          ? "旧窗口已替换，不再预测"
-          : expired
-            ? "周期已结束，不再预测"
-            : "等待本周期有效金额记录",
-    },
-    {
-      label: "参与设备",
-      value: number(result.deviceCount),
-      note: `已读取 ${dataset.devices.length} / ${dataset.expectedDevices} 台`,
-    },
-  ];
-  return (
-    <div className="view-stack quota-cycles cycle-clean-view">
-      <div className="cycle-clean-picker">
-        <label className="cycle-clean-select">
-          <span>周期</span>
-          <select
-            aria-label="官方订阅周期"
-            value={cycleValue(selected)}
-            onChange={(event) => setSelectedId(event.target.value)}
-          >
-            {cycles.map((cycle) => (
-              <option key={cycleValue(cycle)} value={cycleValue(cycle)}>
-                {
-                  {
-                    current: "当前 · ",
-                    replaced: "历史（已替换）· ",
-                    ended: "历史（已结束）· ",
-                    unconfirmed: "待确认 · ",
-                  }[
-                    quotaCycleStatus(cycle, dataset.officialQuota?.latest || [])
-                  ]
-                }
-                {cycleLabel(cycle)}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      <section className="quota-hero" aria-labelledby="quota-hero-title">
-        <div className="quota-hero-head">
-          <div>
-            <span className="eyebrow">官方订阅额度</span>
-            <h2 id="quota-hero-title" className="quota-hero-title">
-              {selected.limitName} ·{" "}
-              {formatWindowDuration(selected.windowMinutes)}
-            </h2>
-            <span className="quota-hero-account">
-              {accountLabel(selected.account, selected.accountKey)}
-            </span>
-          </div>
-          <Badge tone={historicalObservation ? "warning" : "success"}>
-            {replaced
-              ? "旧窗口已替换"
-              : expired
-                ? "历史末次观测"
-                : snapshotStale
-                  ? "快照已过期"
-                  : "当前官方快照"}
-          </Badge>
-        </div>
-        <div className="quota-hero-main">
-          <strong className="quota-hero-percent">
-            {observedRemainingPercent.toFixed(1)}%
-          </strong>
-          <span>{historicalObservation ? "末次观测剩余" : "剩余"}</span>
-          <span className="quota-hero-used">
-            已用 {observedUsedPercent.toFixed(1)}%
-          </span>
-        </div>
-        <div
-          className="quota-hero-progress"
-          role="progressbar"
-          aria-label="官方额度剩余比例"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={boundedRemainingPercent}
-        >
-          <span style={{ width: `${boundedRemainingPercent}%` }} />
-        </div>
-        <div className="quota-hero-meta">
-          <span>
-            {replaced
-              ? `旧记录原定重置：${dateTime(selected.resetsAt)}`
-              : resetSummary(
-                  exactSnapshot?.window.resetsAt || selected.resetsAt,
-                )}
-          </span>
-          <span>最近更新 {dateTime(observedAt)}</span>
-        </div>
-        {historicalObservation && (
-          <p className="quota-hero-historical-note">
-            {replaced
-              ? "此窗口已被最新官方快照替换，请选择标有“当前”的周期查看现有额度。"
-              : expired
-                ? "此数值是末次官方观测，不代表周期最终用量或当前可用额度。"
-                : exactSnapshot
-                  ? "官方快照超过 15 分钟未更新，此剩余比例不代表当前可用额度。"
-                  : "尚无匹配的当前官方快照，暂显示末次观测。"}
-          </p>
-        )}
+      <section className="sub-panel sub-history-detail">
+        <button className="button secondary" onClick={() => setSelected(null)}>
+          <ArrowLeft size={16} />
+          返回周期历史
+        </button>
+        <h2>
+          {selected.limitName} · {formatWindowDuration(selected.windowMinutes)}
+        </h2>
+        <p className="sub-muted">
+          {selected.account} · 原定重置 {dateTime(selected.resetsAt)} · 末次已用{" "}
+          {number(selected.lastUsedPercent)}%
+        </p>
+        <p className="sub-history-notice">
+          历史记录仅用于回顾，不代表当前额度；被替换的窗口可能与当前窗口重叠，不应相加。
+        </p>
+        <UsageDetails result={result} cycle={selected} />
       </section>
-
-      <Section
-        className="cycle-clean-usage"
-        title="本周期用量"
-        subtitle="跨设备官方订阅记录 · 同期汇总，未核实账号归属"
-        action={
-          <button
-            className="button cycle-clean-usage-action"
-            disabled={!result.rows.length}
-            onClick={() => exportCycleCsv(selected, result.rows)}
-          >
-            <Download size={16} />
-            导出 CSV
-          </button>
-        }
-      >
-        <div className="cycle-clean-stats">
-          {stats.map((stat) => (
-            <div className="cycle-clean-stat" key={stat.label}>
-              <span>{stat.label}</span>
-              <strong>{stat.value}</strong>
-              {stat.note && <small>{stat.note}</small>}
-            </div>
-          ))}
+    );
+  return (
+    <section className="sub-panel sub-history">
+      <div className="sub-panel-head">
+        <div>
+          <h2>周期历史</h2>
+          <p className="sub-muted">已结束及被替换的窗口，仅保留末次观测。</p>
         </div>
-        {(dataset.warnings.length > 0 ||
-          dataset.devices.length < dataset.expectedDevices) && (
-          <p className="cycle-clean-coverage-note" role="alert">
-            有设备未成功读取，本周期汇总可能不完整。
-          </p>
-        )}
-        <details className="cycle-clean-method">
-          <summary>统计口径与边界排除</summary>
-          <div>
-            <p>
-              汇总 {dateTime(result.bounds.from)} 至{" "}
-              {dateTime(result.bounds.to)}
-              （含起点、不含结束）的完整分钟桶；记录未核实归属当前账号或额度类别。
-            </p>
-            <p>
-              API 等价费用参考：{result.costLowerBound ? "≥ " : ""}
-              {money(result.cost)}
-              。按设备端价卡估算，仅供比较，并非实际支付金额。
-            </p>
-            {costForecast && (
-              <p>
-                预计总金额 = 截至 {dateTime(costForecast.asOf)} 已记录的 API
-                等价金额 {money(costForecast.recorded)} ÷ 已过周期比例{" "}
-                {(costForecast.elapsedFraction * 100).toFixed(1)}%。
-                按该平均消耗速度推算至重置时间；不按官方额度百分比换算，
-                也不代表订阅总额度或实际账单。缺失设备和未计价记录可能使估算偏低。
-              </p>
-            )}
-            {result.boundaryBuckets > 0 && (
-              <p>
-                已排除 {number(result.boundaryBuckets)} 个跨周期边界分钟桶，共{" "}
-                {number(result.boundaryTokens)} Tokens。
-              </p>
-            )}
-            {result.legacyBuckets > 0 && (
-              <p>
-                已排除 {number(result.legacyBuckets)} 个缺少分钟时间的旧桶，共{" "}
-                {number(result.legacyTokens)} Tokens。
-              </p>
-            )}
-          </div>
-        </details>
-      </Section>
-
-      {forecast && (
-        <ForecastPanel
-          forecast={
-            snapshotStale && !expired
-              ? {
-                  ...forecast,
-                  state: "insufficient",
-                  reason: "stale-snapshot",
-                  latest: { ...forecast.latest, isStale: true },
-                }
-              : forecast
-          }
-        />
-      )}
-
-      <div className="cycle-ranking-grid">
-        <Ranking title="按设备排行" rows={result.devices} />
-        <Ranking title="按模型排行" rows={result.models} />
+        <Badge>{history.length} 条记录</Badge>
       </div>
-
-      <details className="cycle-clean-more">
-        <summary>更多分析</summary>
-        <div className="cycle-clean-more-content">
-          <QuotaCapacityScenario
-            key={selected.accountKey + selected.limitId}
-            usedPercent={observedUsedPercent}
-          />
-          <HistoricalPaceChart
-            cycles={dataset.officialQuota.cycles}
-            selected={selected}
-          />
-          {dataset.officialQuota.officialUsage.length > 0 && (
-            <Section
-              title="官方每日快照"
-              subtitle="同账号同日期采用更新较晚的设备快照，不跨设备相加。"
-            >
-              <div className="official-usage-list">
-                {dataset.officialQuota.officialUsage.map((usage) => {
-                  const account = dataset.officialQuota!.latest.find(
-                    (snapshot) => snapshot.accountKey === usage.accountKey,
-                  )?.account;
-                  const latestBucket = usage.dailyUsageBuckets?.at(-1);
-                  const status = usageStatus(usage.status);
-                  return (
-                    <div className="official-usage-row" key={usage.accountKey}>
-                      <div>
-                        <strong>
-                          {accountLabel(
-                            account || "Codex 账户",
-                            usage.accountKey,
-                          )}
-                        </strong>
-                        <small>更新于 {dateTime(usage.updatedAt)}</small>
-                      </div>
-                      <div>
-                        <Badge tone={status.tone}>{status.label}</Badge>
-                        <strong>
-                          {latestBucket ? number(latestBucket.tokens) : "—"}
-                        </strong>
-                        <small>
-                          {latestBucket
-                            ? `${latestBucket.startDate} Tokens`
-                            : "暂无每日 Tokens"}
-                        </small>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
+      <div className="sub-history-list">
+        {history.slice(safePage * 12, safePage * 12 + 12).map((cycle) => (
+          <button
+            className="sub-history-row"
+            key={`${cycle.id}:${cycle.resetsAt}:${cycle.segment}`}
+            onClick={() => setSelected(cycle)}
+          >
+            <div>
+              <strong>
+                {cycle.limitName} · {formatWindowDuration(cycle.windowMinutes)}
+              </strong>
+              <span>
+                {cycle.account} · {cycle.accountKey.slice(-6)}
+              </span>
+            </div>
+            <div>
+              <span>原定重置</span>
+              <strong>{date(cycle.resetsAt)}</strong>
+            </div>
+            <div>
+              <span>末次已用</span>
+              <strong>{number(cycle.lastUsedPercent)}%</strong>
+            </div>
+            <Badge tone="warning">
+              {cycle.closureReason === "window-changed"
+                ? "已替换"
+                : Date.parse(cycle.resetsAt) <= Date.now()
+                  ? "已结束"
+                  : "历史观测"}
+            </Badge>
+            <ArrowUpRight size={16} />
+          </button>
+        ))}
+      </div>
+      {count > 1 && (
+        <div className="sub-pagination">
+          <button
+            className="button secondary"
+            disabled={!safePage}
+            onClick={() => setPage(safePage - 1)}
+          >
+            上一页
+          </button>
+          <span>
+            {safePage + 1} / {count}
+          </span>
+          <button
+            className="button secondary"
+            disabled={safePage + 1 >= count}
+            onClick={() => setPage(safePage + 1)}
+          >
+            下一页
+          </button>
         </div>
-      </details>
-    </div>
+      )}
+    </section>
   );
 }
+export const QuotaCycles = memo(function QuotaCycles({
+  dataset,
+}: {
+  dataset: DashboardDataset;
+}) {
+  const [view, setView] = useState<"current" | "history">("current");
+  const [selectedKey, setSelectedKey] = useState("");
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+  const current = useMemo(
+    () => currentSubscriptions(dataset.officialQuota),
+    [dataset.officialQuota],
+  );
+  const selected =
+    current.find((item) => item.key === selectedKey) || current[0];
+  const accountCount = useMemo(
+    () => new Set(current.map((item) => item.snapshot.accountKey)).size,
+    [current],
+  );
+  return (
+    <div className="subscriptions">
+      <div className="sub-toolbar">
+        <div className="sub-tabs" aria-label="订阅视图">
+          <button
+            className={view === "current" ? "active" : ""}
+            aria-pressed={view === "current"}
+            onClick={() => setView("current")}
+          >
+            当前订阅
+          </button>
+          <button
+            className={view === "history" ? "active" : ""}
+            aria-pressed={view === "history"}
+            onClick={() => setView("history")}
+          >
+            <History size={16} />
+            周期历史
+          </button>
+        </div>
+        <span className="sub-toolbar-note">Codex 官方渠道</span>
+      </div>
+      {view === "history" ? (
+        <HistoryView
+          dataset={dataset}
+          current={current}
+          now={Math.max(now, Date.now())}
+        />
+      ) : (
+        <>
+          {current.length > 1 && (
+            <div className="sub-window-switcher" aria-label="选择当前额度窗口">
+              {current.map((item) => (
+                <button
+                  key={item.key}
+                  aria-pressed={item.key === selected?.key}
+                  onClick={() => setSelectedKey(item.key)}
+                >
+                  <strong>{windowTitle(item)}</strong>
+                  <span>
+                    {accountCount > 1
+                      ? `${item.snapshot.account} · ${item.snapshot.accountKey.slice(-6)} · `
+                      : ""}
+                    剩余 {number(Math.max(0, 100 - item.window.usedPercent))}%
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {selected ? (
+            <CurrentWindow
+              key={selected.key}
+              item={selected}
+              dataset={dataset}
+              now={Math.max(now, Date.now())}
+              multipleAccounts={hasConflictingAccounts(
+                dataset.officialQuota,
+                selected,
+              )}
+            />
+          ) : (
+            <EmptyState
+              title="尚无当前官方额度"
+              description="在已登录 Codex 的设备上同步 UsageMesh 后，即可查看剩余额度和重置时间。旧记录可在周期历史中查看。"
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+});
