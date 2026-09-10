@@ -40,3 +40,24 @@ These timings vary by CPU, runtime, dataset, and system load. They show reduced 
 ## Browser render sample
 
 A Codex in-app browser check used the development QA harness with 50,000 synthetic records (`qa/subscriptions.html?shell&profile&size=50000`). React Profiler reported 18.6 ms for the workspace/current-subscription mount and 0.9 ms for switching to the closed history list. These are React render durations from one local development run, not page load time, interaction latency, Web Vitals, production guarantees, or a browser before/after comparison. The harness prints `[QA render]` entries only when `profile` is present.
+
+## 2026-09-10 production snapshot audit and refresh overlap
+
+The production dashboard initially displayed a smaller recorded amount while a refresh was in progress. A read-only comparison of the local ledger, the encrypted GitHub REST response, the encrypted `raw.githubusercontent.com` response, and the actual frontend loader confirmed that the accounting rows retained multiple models and matched across those sources. The production DOM subsequently finished refreshing and showed the complete totals. The deployed entry/chunk and deployment commit (`ad9f7dec`) matched the accounting path in the workspace: it reads `ledger.rows`, passes the full dataset into the subscription view, and does not derive period totals from retained request details.
+
+This establishes that the current sources were complete at the times checked. It does **not** reconstruct the earlier plaintext response or prove whether the earlier display came from an older loaded snapshot, a transient scan/classification state, or another intermediate response. No fix for historical accounting loss is claimed. No keys, decrypted ledgers, or real per-device usage values are retained in this repository. The earlier `$850` QA example remains a synthetic fixture, not a historical accounting baseline.
+
+A separate, confirmed refresh delay was removed: each device previously awaited its encrypted ledger and decryption before starting the independent presence request. Those same two reads now start together; envelope validation, session cache scope, heartbeat validation, and failure fallback remain intact. No additional requests, polling loop, or retry loop were introduced.
+
+In a **synthetic** Node `v24.19.0` scenario with a 100 ms ledger response and an independent 100 ms presence response, the median of five loader runs changed from **202.92 ms to 101.81 ms**. This isolates the removed serial network wait and is not a production latency or browser responsiveness measurement.
+
+Reproduce the deterministic regression checks:
+
+```sh
+cd web-ui
+npm test -- --run tests/data.test.ts tests/dashboard.test.tsx
+```
+
+The new coverage checks that the heartbeat starts before a delayed ledger resolves. Another deliberately synthetic fixture contains 3,000 accounting buckets across three models, but only 1,000 recent request details from one model: the full cycle stays at **$1,150**, while the retained details alone total **$150**. It verifies that request retention cannot silently become the period accounting input.
+
+The existing 20-second `AbortSignal.timeout` is supplied to `fetch` and remains attached while `response.json()` consumes the response body. A local native-fetch check sent headers and a partial JSON body without completing it: an 80 ms signal interrupted body consumption at 83.98 ms with `TimeoutError`. No separate infinite-body wait was demonstrated. This runtime check does not replace a trace of a specific Chrome request; fallback index attempts and slow encrypted responses can still prolong a refresh.

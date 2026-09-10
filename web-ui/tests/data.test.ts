@@ -200,3 +200,118 @@ describe("会话内账本缓存", () => {
     expect(cache.ledgers.size).toBe(0);
   });
 });
+
+describe("完整周期账本与刷新延迟", () => {
+  it("周期金额使用全部聚合桶，1000条近期明细不会移除早期模型和金额", async () => {
+    const { aggregateQuotaCycle, forecastCycleCost } = await import(
+      "../src/lib/quotaCycles"
+    );
+    const from = Date.parse("2026-09-08T00:00:00Z");
+    const observedAt = "2026-09-10T12:00:00Z";
+    const rows = Array.from({ length: 3000 }, (_, index) => {
+      const timestampMs = from + index * 60_000;
+      const group = Math.floor(index / 1000);
+      return {
+        timestampMs,
+        date: new Date(timestampMs).toISOString().slice(0, 10),
+        client: "codex",
+        model: ["synthetic-early", "synthetic-middle", "synthetic-recent"][
+          group
+        ],
+        routeType: "official",
+        billingChannel: "official-subscription",
+        input: 100,
+        costUsd: [0.7, 0.3, 0.15][group],
+        messages: 1,
+      };
+    });
+    fetchResponses({
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": await encryptedLedger("aabb", key, {
+        schemaVersion: 8,
+        generatedAt: observedAt,
+        device: { id: "synthetic" },
+        rows,
+        requests: rows.slice(-1000),
+      }),
+    });
+    const data = await loadDashboardWithKey(repo, encoded);
+    expect(data.records).toHaveLength(3000);
+    expect(data.requests).toHaveLength(1000);
+    expect(new Set(data.requests.map((row) => row.model))).toEqual(
+      new Set(["synthetic-recent"]),
+    );
+    const aggregation = aggregateQuotaCycle(data.records, {
+      id: "synthetic-week",
+      accountKey: "synthetic",
+      account: "synthetic",
+      limitId: "codex",
+      limitName: "Codex",
+      windowName: "primary",
+      windowMinutes: 10080,
+      resetsAt: "2026-09-15T00:00:00Z",
+      nominalStartAt: "2026-09-08T00:00:00Z",
+      firstObservedAt: "2026-09-08T00:00:00Z",
+      lastObservedAt: observedAt,
+      firstUsedPercent: 0,
+      lastUsedPercent: 79,
+      samples: [],
+      closedAt: null,
+      closureReason: null,
+      segment: 0,
+    });
+    expect(aggregation.rows).toHaveLength(3000);
+    expect(aggregation.cost).toBeCloseTo(1150);
+    expect(aggregation.models).toHaveLength(3);
+    expect(data.requests.reduce((sum, row) => sum + row.cost, 0)).toBeCloseTo(
+      150,
+    );
+    const value = forecastCycleCost(
+      aggregation,
+      79,
+      observedAt,
+      data.lastSync,
+      Date.parse(observedAt),
+    );
+    expect(value?.recorded).toBeCloseTo(1150);
+    expect(value?.total).toBeCloseTo(1150 / 0.79);
+  });
+
+  it("心跳读取与账本下载并行，账本迟到不阻止心跳先完成", async () => {
+    const envelope = await encryptedLedger("aabb", key, {
+      generatedAt: "2026-09-10T00:00:00Z",
+      device: { id: "one" },
+      rows: [],
+    });
+    let releaseLedger!: (response: Response) => void;
+    const ledgerResponse = new Promise<Response>((resolve) => {
+      releaseLedger = resolve;
+    });
+    let presenceStarted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const path = String(url);
+        if (path.endsWith("/index.json"))
+          return new Response(JSON.stringify({ branches: ["um-ledger-aabb"] }));
+        if (path.endsWith("/ledger.json")) return ledgerResponse;
+        presenceStarted = true;
+        return new Response(
+          JSON.stringify({
+            kind: "usagemesh-device-presence",
+            schemaVersion: 1,
+            deviceHash: "aabb",
+            updatedAt: "2026-09-10T00:01:00Z",
+          }),
+        );
+      }),
+    );
+    const loading = loadDashboardWithKey(repo, encoded);
+    try {
+      await vi.waitFor(() => expect(presenceStarted).toBe(true));
+    } finally {
+      releaseLedger(new Response(JSON.stringify(envelope)));
+    }
+    expect((await loading).devices[0].presenceAt).toBe("2026-09-10T00:01:00Z");
+  });
+});

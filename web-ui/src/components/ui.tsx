@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, Database, X } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, Copy, Database, X } from "lucide-react";
 
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
@@ -60,16 +60,48 @@ export function Section({
   children: ReactNode;
   className?: string;
 }) {
+  const headingId = useId();
   return (
-    <section className={`panel ${className}`}>
+    <section className={`panel ${className}`} aria-labelledby={headingId}>
       <div className="panel-heading">
         <div>
-          <h2>{title}</h2>
+          <h2 id={headingId}>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
         {action}
       </div>
       {children}
+    </section>
+  );
+}
+export function DisclosureSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  return (
+    <section className="disclosure-section" aria-labelledby={`${id}-heading`}>
+      <h2>
+        <button
+          id={`${id}-heading`}
+          className="disclosure-toggle"
+          aria-expanded={expanded}
+          aria-controls={`${id}-content`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span>{title}</span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
+      </h2>
+      {expanded && (
+        <div id={`${id}-content`} className="view-stack disclosure-content">
+          {children}
+        </div>
+      )}
     </section>
   );
 }

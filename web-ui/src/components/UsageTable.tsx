@@ -231,12 +231,12 @@ export const UsageTable = memo(function UsageTable({
       <div className="panel-heading">
         <div>
           <h2>
-            {requests ? "实时请求明细" : "聚合账本明细"}{" "}
+            {requests ? "请求明细" : "聚合账本明细"}{" "}
             <Badge>{number(sorted.length)} 条</Badge>
           </h2>
           <p>
             {requests
-              ? "来源客户端记录的真实用量元数据；思考强度为空时不做推测。"
+              ? "设备账本保留的近期请求记录"
               : "账本按设备、时间和模型等维度聚合，费用沿用设备端结果。"}
           </p>
         </div>
@@ -304,6 +304,7 @@ export const UsageTable = memo(function UsageTable({
                 {shownColumns.map((column) => (
                   <th
                     key={column.key}
+                    scope="col"
                     className={column.numeric ? "numeric" : ""}
                     aria-sort={
                       sortKey === column.key

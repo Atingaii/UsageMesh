@@ -66,9 +66,6 @@ function countdown(value: string | null, now: number) {
       ? `${hours} 小时 ${minutes % 60} 分钟后重置`
       : `${minutes} 分钟后重置`;
 }
-function windowTitle(item: SubscriptionWindow) {
-  return `${item.snapshot.limitName || item.snapshot.limitId} · ${formatWindowDuration(item.window.windowMinutes)}`;
-}
 function Meter({ value, label }: { value: number; label: string }) {
   const bounded = Math.max(0, Math.min(100, value));
   return (
@@ -187,6 +184,142 @@ function UsageDetails({
     </div>
   );
 }
+function quotaTitle(item: SubscriptionWindow) {
+  const duration = item.window.windowMinutes;
+  return duration === 10080
+    ? "每周额度"
+    : `${formatWindowDuration(duration)}额度`;
+}
+function QuotaRow({ item, now }: { item: SubscriptionWindow; now: number }) {
+  const observed = Date.parse(item.snapshot.updatedAt);
+  const expired = Date.parse(item.window.resetsAt || "") <= now;
+  const stale =
+    !Number.isFinite(observed) || now - observed > 15 * 60000 || observed > now;
+  const remaining = Math.max(0, 100 - item.window.usedPercent);
+  const forecast = useMemo(
+    () => (item.cycle ? forecastQuotaCycle(item.cycle) : null),
+    [item.cycle],
+  );
+  const pace =
+    !stale &&
+    !expired &&
+    forecast?.state === "ready" &&
+    !forecast.latest.isStale
+      ? forecast.projection.reaches100AtMs != null &&
+        forecast.projection.reaches100AtMs <
+          Date.parse(item.window.resetsAt || "")
+        ? `按近期速度，预计 ${date(forecast.projection.reaches100AtMs)} 耗尽`
+        : "按近期速度，预计可用至重置"
+      : null;
+  return (
+    <div className="sub-quota-row">
+      <div className="sub-quota-label">
+        <strong>{quotaTitle(item)}</strong>
+        <span>{stale || expired ? "末次观测" : "官方额度"}</span>
+      </div>
+      <div className="sub-quota-progress">
+        <div>
+          <strong>
+            {number(remaining)}% <span>剩余</span>
+          </strong>
+          <span>已用 {number(item.window.usedPercent)}%</span>
+        </div>
+        <Meter
+          value={remaining}
+          label={`${item.snapshot.limitName || item.snapshot.limitId} ${quotaTitle(item)}剩余比例`}
+        />
+        {pace && <p className="sub-muted sub-pace">{pace}</p>}
+      </div>
+      <div className="sub-quota-reset">
+        <span>
+          <Clock3 size={14} />
+          {countdown(item.window.resetsAt, now)}
+        </span>
+        <time
+          dateTime={item.window.resetsAt || undefined}
+          title={
+            item.window.resetsAt ? dateTime(item.window.resetsAt) : undefined
+          }
+        >
+          {date(item.window.resetsAt)} · {zone}
+        </time>
+        {(stale || expired) && (
+          <Badge tone="warning">{expired ? "等待更新" : "快照过期"}</Badge>
+        )}
+      </div>
+    </div>
+  );
+}
+function AccountQuotas({
+  items,
+  now,
+}: {
+  items: SubscriptionWindow[];
+  now: number;
+}) {
+  const primary = items.filter((item) => item.snapshot.limitId === "codex");
+  const extra = items.filter((item) => item.snapshot.limitId !== "codex");
+  const extraGroups = new Map<string, SubscriptionWindow[]>();
+  for (const item of extra) {
+    const group = extraGroups.get(item.snapshot.limitId) || [];
+    group.push(item);
+    extraGroups.set(item.snapshot.limitId, group);
+  }
+  const account = items[0].snapshot;
+  return (
+    <section className="sub-panel sub-account" aria-label="当前官方额度">
+      <div className="sub-panel-head">
+        <div>
+          <h2>
+            Codex <span className="sub-account-plan">{account.account}</span>
+          </h2>
+          <p className="sub-muted">
+            账号 {account.accountKey.slice(-6)} · 官方观测于{" "}
+            {date(account.updatedAt)}
+          </p>
+        </div>
+        <span className="sub-source">ChatGPT 订阅</span>
+      </div>
+      {primary.map((item) => (
+        <QuotaRow key={item.key} item={item} now={now} />
+      ))}
+      {!!extra.length && (
+        <details className="sub-extra">
+          <summary>
+            其他模型额度{" "}
+            <span>
+              {[
+                ...new Set(
+                  extra.map(
+                    (item) => item.snapshot.limitName || item.snapshot.limitId,
+                  ),
+                ),
+              ].join("、")}
+            </span>
+            <ChevronDown size={16} />
+          </summary>
+          <div>
+            {[...extraGroups.entries()].map(([limitId, windows]) => (
+              <section
+                key={limitId}
+                aria-label={windows[0].snapshot.limitName || limitId}
+              >
+                {extraGroups.size > 1 && (
+                  <p className="sub-extra-name">
+                    {windows[0].snapshot.limitName || limitId}
+                  </p>
+                )}
+                {windows.map((item) => (
+                  <QuotaRow key={item.key} item={item} now={now} />
+                ))}
+              </section>
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
 function CurrentWindow({
   item,
   dataset,
@@ -242,21 +375,19 @@ function CurrentWindow({
     dataset.expectedDevices,
     item.snapshot.updatedAt,
   ]);
-  const forecast = useMemo(
-    () => (item.cycle ? forecastQuotaCycle(item.cycle) : null),
-    [item.cycle],
-  );
   const snapshotTime = Date.parse(item.snapshot.updatedAt);
   const expired = Date.parse(item.window.resetsAt || "") <= now;
   const stale =
     !Number.isFinite(snapshotTime) ||
     now - snapshotTime > 15 * 60000 ||
     snapshotTime > now;
-  const used = item.window.usedPercent,
-    remaining = Math.max(0, 100 - used);
+  const used = item.window.usedPercent;
   const supported = item.snapshot.limitId === "codex";
   const quotaAdjusted = period?.changes.some(
     (change) => change.kind === "quota-adjustment",
+  );
+  const partialPricing = Boolean(
+    estimate?.partialPricing || result?.costLowerBound,
   );
   const value =
     !stale && !expired && !multipleAccounts && supported && !quotaAdjusted
@@ -279,166 +410,94 @@ function CurrentWindow({
                 : Date.parse(dataset.lastSync) < snapshotTime
                   ? "等待账本同步到额度观测时刻"
                   : "暂无可用于估算的计价记录";
-  const pace =
-    !stale &&
-    !expired &&
-    forecast?.state === "ready" &&
-    !forecast.latest.isStale
-      ? forecast.projection.reaches100AtMs != null &&
-        forecast.projection.reaches100AtMs <
-          Date.parse(item.window.resetsAt || "")
-        ? `按近期速度，预计 ${date(forecast.projection.reaches100AtMs)} 耗尽`
-        : "按近期速度，预计可用至重置"
-      : null;
   return (
-    <div className="sub-current">
-      <div className="sub-primary-grid">
-        <section className="sub-panel sub-quota" aria-label="当前官方额度">
-          <div className="sub-panel-head">
-            <div>
-              <p className="sub-overline">当前订阅</p>
-              <h2>{windowTitle(item)}</h2>
-              <p className="sub-muted">
-                {item.snapshot.account} · {item.snapshot.accountKey.slice(-6)}
-              </p>
-            </div>
-            <Badge tone={stale || expired ? "warning" : "success"}>
-              {expired ? "等待更新" : stale ? "快照过期" : "已同步"}
-            </Badge>
-          </div>
-          <div className="sub-remaining">
-            <strong>
-              {remaining.toFixed(0)}
-              <span>%</span>
-            </strong>
-            <div>
-              <span>{stale || expired ? "末次剩余" : "额度剩余"}</span>
-              <small>已用 {used.toFixed(1)}%</small>
-            </div>
-          </div>
-          <Meter value={remaining} label="官方额度剩余比例" />
-          <div className="sub-reset">
-            <Clock3 size={17} />
-            <div>
-              <strong>{countdown(item.window.resetsAt, now)}</strong>
-              <span>
-                {date(item.window.resetsAt)} · {zone}
-              </span>
-            </div>
-          </div>
-          {pace && (
-            <p className="sub-pace">
-              <ArrowUpRight size={16} />
-              {pace}
-            </p>
-          )}
-          <p className="sub-updated">
-            官方观测于 {date(item.snapshot.updatedAt)}
-            {stale ? " · 仅供历史参考" : ""}
+    <section className="sub-panel sub-activity" aria-label="本周期用量">
+      <div className="sub-panel-head">
+        <div>
+          <h2>本周期用量</h2>
+          <p className="sub-muted">
+            {item.cycle
+              ? `${date(item.cycle.nominalStartAt)} — ${date(item.cycle.resetsAt)}`
+              : "等待官方周期范围"}{" "}
+            · 跨设备官方订阅记录
           </p>
-        </section>
-        <section className="sub-panel sub-value" aria-label="周期金额估算">
-          <div className="sub-panel-head">
-            <div>
-              <p className="sub-overline">按额度比例换算</p>
-              <h2>本周期总金额估算</h2>
-            </div>
-            <span className="sub-unit">API 等价 · USD</span>
-          </div>
-          <div className="sub-value-total">
-            {value ? (
-              <>
-                <span>≈</span> {money(value.total)}
-              </>
-            ) : (
-              "—"
-            )}
-          </div>
-          <p className="sub-value-caption">
-            {value ? "按当前任务结构，折算到 100% 额度" : unavailable}
-          </p>
-          <div className="sub-value-split">
-            <div>
-              <span>已记录金额</span>
-              <strong>
-                {value
-                  ? money(value.recorded)
-                  : result
-                    ? money(result.cost)
-                    : "—"}
-              </strong>
-            </div>
-            <div>
-              <span>剩余额度估算</span>
-              <strong>{value ? `≈ ${money(value.remaining)}` : "—"}</strong>
-            </div>
-          </div>
-          <div className="sub-formula">
-            {value
-              ? `${money(value.recorded)} ÷ ${number(value.usedPercent)} × 100 = ${money(value.total)}`
-              : "总金额 = 已用金额 ÷ 已用额度百分点 × 100"}
-          </div>
-          <p className="sub-muted sub-value-note">
-            {value?.partialPricing ? "部分记录未完成计价。" : ""}
-            {used > 0 && used < 5 ? "额度用量较少，估算波动可能较大。" : ""}
-            金额按工作区同期官方订阅记录估算，非实际账单。
-            {partialCoverage && "部分设备账本未齐，估算可能偏低。"}
-            {value && <>金额截止 {date(value.asOf)}。</>}
-          </p>
-        </section>
+        </div>
+        <span className="sub-device-status">
+          <Monitor size={15} />
+          {result?.deviceCount || 0} 台参与 · {dataset.devices.length}/
+          {dataset.expectedDevices} 台已读取
+        </span>
       </div>
-      <section className="sub-panel sub-activity">
-        <div className="sub-panel-head">
-          <div>
-            <h2>本周期用量</h2>
-            <p className="sub-muted">
-              跨设备汇总 ·{" "}
-              {item.cycle
-                ? `${date(item.cycle.nominalStartAt)} — ${date(item.cycle.resetsAt)}`
-                : "等待官方周期范围"}
-            </p>
-          </div>
-          <span className="sub-device-status">
-            <Monitor size={16} />
-            {dataset.devices.length} / {dataset.expectedDevices} 台已读取
-          </span>
+      <div className="sub-stat-grid">
+        <div>
+          <span>已记录金额</span>
+          <strong>
+            {value ? money(value.recorded) : result ? money(result.cost) : "—"}
+          </strong>
+          <small>API 等价 · USD</small>
         </div>
-        <div className="sub-stat-grid">
-          <div>
-            <span>Tokens</span>
-            <strong>{result ? compact(result.totalTokens) : "—"}</strong>
-          </div>
-          <div>
-            <span>请求次数</span>
-            <strong>{result ? number(result.requests) : "—"}</strong>
-          </div>
-          <div>
-            <span>参与设备</span>
-            <strong>{result ? number(result.deviceCount) : "—"}</strong>
-          </div>
+        <div aria-label="周期金额估算">
+          <span>本周期总金额估算</span>
+          <strong>{value ? `≈ ${money(value.total)}` : "—"}</strong>
+          <small>{value ? "按已用额度折算至 100%" : unavailable}</small>
         </div>
-        {result && item.cycle && (
-          <>
-            <button
-              className="sub-disclosure"
-              aria-expanded={details}
-              onClick={() => setDetails(!details)}
-            >
-              <Layers3 size={16} />
-              用量明细与统计口径
-              <ChevronDown size={16} className={details ? "is-open" : ""} />
-            </button>
-            {details && (
+        <div>
+          <span>Tokens</span>
+          <strong>{result ? compact(result.totalTokens) : "—"}</strong>
+          <small>含缓存用量</small>
+        </div>
+        <div>
+          <span>请求次数</span>
+          <strong>{result ? number(result.requests) : "—"}</strong>
+          <small>按分钟记录汇总</small>
+        </div>
+      </div>
+      <p
+        className={`sub-coverage-note${partialCoverage || partialPricing ? " is-warning" : ""}`}
+      >
+        金额为 API 等价估算，非订阅账单。
+        {partialPricing && " 部分记录未完成计价，金额可能偏低。"}
+        {partialCoverage && " 部分设备账本未齐，估算可能偏低。"}
+        {value && used < 5 && " 额度用量较少，估算波动可能较大。"}
+        {value && <> 截止 {date(value.asOf)}。</>}
+      </p>
+      {result && item.cycle && (
+        <>
+          <button
+            className="sub-disclosure"
+            aria-expanded={details}
+            onClick={() => setDetails(!details)}
+          >
+            <Layers3 size={16} />
+            用量明细与统计口径
+            <ChevronDown size={16} className={details ? "is-open" : ""} />
+          </button>
+          {details && (
+            <>
+              <div className="sub-estimate-detail">
+                <h3>金额换算</h3>
+                <p>
+                  {value
+                    ? `${money(value.recorded)} ÷ ${number(value.usedPercent)} × 100 = ${money(value.total)}`
+                    : "总金额 = 已用金额 ÷ 已用额度百分点 × 100"}
+                </p>
+                <p className="sub-muted">
+                  剩余额度估算 {value ? `≈ ${money(value.remaining)}` : "—"}
+                  。按当前任务结构换算，不是官方固定金额额度。
+                  {value?.partialPricing && "部分记录未完成计价。"}
+                  {used > 0 && used < 5 && "额度用量较少，估算波动可能较大。"}
+                </p>
+              </div>
               <UsageDetails
                 result={result}
                 cycle={item.cycle}
                 changes={period?.changes}
               />
-            )}
-          </>
-        )}
-      </section>
-    </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 function HistoryView({
@@ -571,6 +630,7 @@ export const QuotaCycles = memo(function QuotaCycles({
 }) {
   const [view, setView] = useState<"current" | "history">("current");
   const [selectedKey, setSelectedKey] = useState("");
+  const [accountKey, setAccountKey] = useState("");
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60000);
@@ -584,11 +644,49 @@ export const QuotaCycles = memo(function QuotaCycles({
     () => subscriptionPeriods(dataset.officialQuota, current),
     [dataset.officialQuota, current],
   );
+  const accounts = useMemo(() => {
+    const known = new Map(
+      current.map((item) => [
+        item.snapshot.accountKey,
+        {
+          accountKey: item.snapshot.accountKey,
+          account: item.snapshot.account,
+        },
+      ]),
+    );
+    if (view === "history") {
+      for (const period of periods) {
+        if (!known.has(period.accountKey))
+          known.set(period.accountKey, {
+            accountKey: period.accountKey,
+            account: period.account,
+          });
+      }
+    }
+    return [...known.values()];
+  }, [current, periods, view]);
+  const selectedAccount =
+    accounts.find((item) => item.accountKey === accountKey) || accounts[0];
+  const accountWindows = useMemo(
+    () =>
+      current.filter(
+        (item) => item.snapshot.accountKey === selectedAccount?.accountKey,
+      ),
+    [current, selectedAccount],
+  );
+  const primary = accountWindows.filter(
+    (item) => item.snapshot.limitId === "codex",
+  );
   const selected =
-    current.find((item) => item.key === selectedKey) || current[0];
-  const accountCount = useMemo(
-    () => new Set(current.map((item) => item.snapshot.accountKey)).size,
-    [current],
+    primary.find((item) => item.key === selectedKey) || primary[0];
+  const visiblePeriods = useMemo(
+    () =>
+      selectedAccount
+        ? periods.filter(
+            (period) => period.accountKey === selectedAccount.accountKey,
+          )
+        : periods,
+    [periods, selectedAccount],
   );
   return (
     <div className="subscriptions">
@@ -610,34 +708,57 @@ export const QuotaCycles = memo(function QuotaCycles({
             周期历史
           </button>
         </div>
-        <span className="sub-toolbar-note">Codex 官方渠道</span>
+        {accounts.length > 1 ? (
+          <label className="sub-account-select">
+            订阅账号
+            <select
+              aria-label="订阅账号"
+              value={selectedAccount?.accountKey}
+              onChange={(event) => {
+                setAccountKey(event.target.value);
+                setSelectedKey("");
+              }}
+            >
+              {accounts.map((account) => (
+                <option key={account.accountKey} value={account.accountKey}>
+                  {account.account} · {account.accountKey.slice(-6)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span className="sub-toolbar-note">官方额度与本地用量</span>
+        )}
       </div>
       {view === "history" ? (
         <HistoryView
           dataset={dataset}
-          periods={periods}
+          periods={visiblePeriods}
           now={Math.max(now, Date.now())}
         />
       ) : (
         <>
-          {current.length > 1 && (
-            <div className="sub-window-switcher" aria-label="选择当前额度窗口">
-              {current.map((item) => (
-                <button
-                  key={item.key}
-                  aria-pressed={item.key === selected?.key}
-                  onClick={() => setSelectedKey(item.key)}
-                >
-                  <strong>{windowTitle(item)}</strong>
-                  <span>
-                    {accountCount > 1
-                      ? `${item.snapshot.account} · ${item.snapshot.accountKey.slice(-6)} · `
-                      : ""}
-                    剩余 {number(Math.max(0, 100 - item.window.usedPercent))}%
-                  </span>
-                </button>
-              ))}
-            </div>
+          {!!accountWindows.length && (
+            <AccountQuotas
+              items={accountWindows}
+              now={Math.max(now, Date.now())}
+            />
+          )}
+          {primary.length > 1 && (
+            <label className="sub-period-select">
+              用量统计周期
+              <select
+                aria-label="统计周期"
+                value={selected?.key}
+                onChange={(event) => setSelectedKey(event.target.value)}
+              >
+                {primary.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {quotaTitle(item)} · {date(item.window.resetsAt)} 重置
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {selected ? (
             <CurrentWindow
@@ -660,7 +781,11 @@ export const QuotaCycles = memo(function QuotaCycles({
             />
           ) : (
             <EmptyState
-              title="尚无当前官方额度"
+              title={
+                accountWindows.length
+                  ? "暂无主额度用量窗口"
+                  : "尚无当前官方额度"
+              }
               description="在已登录 Codex 的设备上同步 UsageMesh 后，即可查看剩余额度和重置时间。旧记录可在周期历史中查看。"
             />
           )}

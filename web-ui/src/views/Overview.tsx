@@ -1,13 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import {
-  ArrowDownToLine,
-  ArrowRight,
-  ArrowUpRight,
-  Coins,
-  Cpu,
-  Layers3,
-  Sparkles,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -40,53 +32,37 @@ export function KpiCards({ records }: { records: UsageRecord[] }) {
       value: compact(value.totalTokens),
       full: number(value.totalTokens),
       note: "输入、缓存、输出与 Reasoning",
-      icon: Layers3,
-      tone: "violet",
-      tag: "TOTAL USAGE",
     },
     {
       title: "估算费用",
       value: `${value.lowerBound ? "≥ " : ""}${money(value.cost)}`,
       full: money(value.cost, 6),
       note: "设备端兼容价卡 · 非实际账单",
-      icon: Coins,
-      tone: "amber",
-      tag: "ESTIMATED COST",
     },
     {
       title: "请求记录",
       value: number(value.requestsCount),
       full: number(value.requestsCount),
-      note: `${new Set(records.map((row) => row.model)).size} 个模型参与了你的工作`,
-      icon: Cpu,
-      tone: "teal",
-      tag: "TOTAL REQUESTS",
+      note: `${new Set(records.map((row) => row.model)).size} 个模型`,
     },
     {
       title: "缓存命中率",
       value: `${value.cacheRate.toFixed(1)}%`,
       full: `${value.cacheRate.toFixed(3)}%`,
       note: `${compact(value.cacheReadTokens)} Tokens 来自缓存读取`,
-      icon: ArrowDownToLine,
-      tone: "blue",
-      tag: "CACHE EFFICIENCY",
     },
   ];
   return (
-    <div className="kpi-grid">
+    <div className="kpi-grid overview-metrics" aria-label="当前范围用量汇总">
       {cards.map((card) => (
         <section className="kpi-card" key={card.title}>
           <div className="kpi-top">
             <span>{card.title}</span>
-            <span className={`kpi-icon ${card.tone}`}>
-              <card.icon size={17} />
-            </span>
           </div>
           <div className="kpi-value" title={card.full}>
             {card.value}
           </div>
           <div className="kpi-note">{card.note}</div>
-          <span className="kpi-tag">{card.tag}</span>
         </section>
       ))}
     </div>
@@ -99,7 +75,7 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
   return (
     <Section
       title="用量趋势"
-      subtitle="每一天的投入，都清晰可见"
+      subtitle="按日汇总当前筛选范围"
       className="trend-panel"
       action={
         <label className="inline-select">
@@ -178,7 +154,7 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
               <Area
                 type="monotone"
                 dataKey={metric}
-                stroke="#538bff"
+                stroke="var(--primary)"
                 strokeWidth={2}
                 fill="var(--chart-fill)"
                 dot={data.length === 1 ? { r: 4 } : false}
@@ -292,12 +268,9 @@ export const Overview = memo(function Overview({
     ["Reasoning", values.reasoningTokens],
   ] as const;
   return (
-    <div className="view-stack">
-      <div className="credit-today">
-        <TrendChart records={records} />
-        <KpiCards records={records} />
-      </div>
-      <h2 className="region-heading">近期概览</h2>
+    <div className="view-stack overview-view">
+      <KpiCards records={records} />
+      <TrendChart records={records} />
       <div className="overview-rank-grid">
         <Section title="近期活动" subtitle="当前筛选范围内最近的聚合记录">
           <div className="credit-activity">
@@ -323,11 +296,10 @@ export const Overview = memo(function Overview({
         </Section>
         <Section
           title="Token 构成"
-          subtitle="看清用量的每一部分"
+          subtitle="输入、缓存与输出分布"
           className="token-panel"
         >
           <div className="token-total">
-            <span className="eyebrow">TOKEN BREAKDOWN</span>
             <strong>{compact(values.totalTokens)}</strong>
             <span>Tokens 总用量</span>
           </div>
@@ -401,14 +373,11 @@ export const Overview = memo(function Overview({
         />
       </div>
       <div className="insight-strip">
-        <span className="icon-tile">
-          <Sparkles size={20} />
-        </span>
         <div>
           <strong>
             {budget
               ? `本月费用提醒 · ${lowerBound ? "≥ " : ""}${money(monthlyCost)} / ${money(budget)}`
-              : "了解用量，也掌握节奏。"}
+              : "每月费用提醒"}
           </strong>
           <p>
             {budget

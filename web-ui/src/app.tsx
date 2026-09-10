@@ -35,7 +35,7 @@ import type { ActiveTab, FilterState } from "./lib/types";
 import { UnlockScreen } from "./components/UnlockScreen";
 import { NAV, WorkspaceShell } from "./components/WorkspaceShell";
 import { FilterBar } from "./components/FilterBar";
-import { Badge, EmptyState } from "./components/ui";
+import { Badge, DisclosureSection, EmptyState } from "./components/ui";
 import { exportRows, UsageTable } from "./components/UsageTable";
 import { ConnectDevice } from "./components/ConnectDevice";
 import "./index.css";
@@ -188,6 +188,7 @@ function App() {
       status={syncStatus}
       deviceCount={dataset.devices.length}
       refreshSeconds={preferences.refreshSeconds}
+      checkedAt={checkedAt}
       onRefresh={() => void dashboard.refresh()}
       onLock={() => {
         setConnectOpen(false);
@@ -197,9 +198,7 @@ function App() {
       onAddDevice={() => setConnectOpen(true)}
     >
       <main id="main-content" className="main-content" tabIndex={-1}>
-        <div
-          className={`page-heading ${activeTab === "guide" ? "sr-only" : ""}`}
-        >
+        <div className="page-heading">
           <div>
             <div className="eyebrow">{current.eyebrow}</div>
             <div className="page-title">
@@ -211,15 +210,7 @@ function App() {
             <p>{current.description}</p>
           </div>
           <div className="page-actions">
-            {activeTab === "devices" ? (
-              <button
-                className="button primary"
-                onClick={() => setConnectOpen(true)}
-              >
-                <Plus size={16} />
-                接入新设备
-              </button>
-            ) : hasFilters ? (
+            {hasFilters && activeTab !== "aggregated" ? (
               <button
                 className="button"
                 disabled={!records.length}
@@ -341,11 +332,13 @@ function App() {
                   budget={preferences.monthlyBudget}
                   lowerBound={month.lowerBound}
                 />
-                <PeriodComparison dataset={dataset} filters={filters} />
-                <DataQuality
-                  dataset={dataset}
-                  onInspect={() => navigate("devices")}
-                />
+                <DisclosureSection title="周期对比与数据检查">
+                  <PeriodComparison dataset={dataset} filters={filters} />
+                  <DataQuality
+                    dataset={dataset}
+                    onInspect={() => navigate("devices")}
+                  />
+                </DisclosureSection>
               </div>
             )}
             {activeTab === "analytics" && (

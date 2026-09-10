@@ -44,36 +44,37 @@ export function Guide({ onBack }: { onBack: () => void }) {
     [copyError, setCopyError] = useState(false);
   return (
     <article className="guide-page">
-      <button className="text-button" onClick={onBack}>
-        <ArrowLeft size={15} />
-        返回概览
-      </button>
-      <h2>工作区使用指南</h2>
-      <div className="guide-meta">
-        <span>
-          <FileText size={14} />
-          {chapters.length} 个章节
-        </span>
-        <button
-          className="button"
-          onClick={async () => {
-            setCopyError(false);
-            try {
-              await navigator.clipboard.writeText(
-                chapters
-                  .map(([, title, body]) => `## ${title}\n\n${body}`)
-                  .join("\n\n"),
-              );
-              setCopied(true);
-            } catch {
-              setCopied(false);
-              setCopyError(true);
-            }
-          }}
-        >
-          <Copy size={14} />
-          {copied ? "已复制" : "复制 Markdown"}
+      <div className="guide-toolbar">
+        <button className="text-button" onClick={onBack}>
+          <ArrowLeft size={15} />
+          返回概览
         </button>
+        <div className="guide-meta">
+          <span>
+            <FileText size={14} />
+            {chapters.length} 个章节
+          </span>
+          <button
+            className="button"
+            onClick={async () => {
+              setCopyError(false);
+              try {
+                await navigator.clipboard.writeText(
+                  chapters
+                    .map(([, title, body]) => `## ${title}\n\n${body}`)
+                    .join("\n\n"),
+                );
+                setCopied(true);
+              } catch {
+                setCopied(false);
+                setCopyError(true);
+              }
+            }}
+          >
+            <Copy size={14} />
+            {copied ? "已复制" : "复制 Markdown"}
+          </button>
+        </div>
       </div>
       {copyError && <p role="status">复制失败，请选择下方正文手动复制。</p>}
       <p className="guide-intro">
@@ -86,6 +87,7 @@ export function Guide({ onBack }: { onBack: () => void }) {
             <a
               key={id}
               className={active === id ? "active" : ""}
+              aria-current={active === id ? "location" : undefined}
               href={`#guide-${id}`}
               onClick={(e) => {
                 e.preventDefault();
@@ -102,10 +104,10 @@ export function Guide({ onBack }: { onBack: () => void }) {
         <div>
           {chapters.map(([id, title, body], i) => (
             <section id={`guide-${id}`} key={id}>
-              <h3>
+              <h2>
                 <span>{i + 1}</span>
                 {title}
-              </h3>
+              </h2>
               <div className="guide-copy">
                 <p>{body}</p>
                 {id === "local" && <CopyCommand command="usagemesh serve" />}

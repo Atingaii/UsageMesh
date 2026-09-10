@@ -30,14 +30,14 @@ export const NAV = [
     icon: LayoutDashboard,
     section: "工作空间",
     eyebrow: "WORKSPACE OVERVIEW",
-    description: "每台设备、每个模型。让你的 AI 用量一目了然。",
+    description: "查看所有设备的用量、费用与近期活动。",
   },
   {
     id: "analytics",
     label: "分析工作台",
     icon: ChartNoAxesCombined,
     eyebrow: "USAGE ANALYTICS",
-    description: "从用量结构到请求细节，找到真正值得关注的变化。",
+    description: "比较模型与设备的用量结构，追溯请求明细。",
   },
   {
     id: "quota-cycles",
@@ -51,7 +51,7 @@ export const NAV = [
     label: "数据明细",
     icon: Database,
     eyebrow: "USAGE EXPLORER",
-    description: "按设备与模型追溯账本，筛选并导出你的用量数据。",
+    description: "搜索、筛选和导出设备账本。",
   },
   {
     id: "devices",
@@ -59,14 +59,14 @@ export const NAV = [
     icon: Monitor,
     section: "管理",
     eyebrow: "CONNECTED DEVICES",
-    description: "掌握每一台设备的同步状态，让用量持续汇聚。",
+    description: "管理已接入设备，检查心跳与账本同步状态。",
   },
   {
     id: "settings",
     label: "工作区设置",
     icon: Settings2,
     eyebrow: "WORKSPACE SETTINGS",
-    description: "按你的工作方式，调整外观、刷新与费用提醒。",
+    description: "管理外观、自动刷新、费用提醒与会话。",
   },
   {
     id: "guide",
@@ -91,6 +91,7 @@ interface Props {
   status: SyncStatus;
   deviceCount: number;
   refreshSeconds: number;
+  checkedAt?: number | null;
   onRefresh: () => void;
   onLock: () => void;
   onAddDevice: () => void;
@@ -110,6 +111,7 @@ export function WorkspaceShell(props: Props) {
     status,
     deviceCount,
     refreshSeconds,
+    checkedAt,
     onRefresh,
     onLock,
     onAddDevice,
@@ -183,6 +185,7 @@ export function WorkspaceShell(props: Props) {
             onAddDevice();
           }}
           title="接入新设备"
+          aria-label="接入新设备"
         >
           <Plus size={18} />
           {!small && <span>接入新设备</span>}
@@ -214,12 +217,22 @@ export function WorkspaceShell(props: Props) {
         )}
         <div className="sidebar-signature">
           <span className="status-dot" />
-          {!small && <span>LOCAL FIRST. ALWAYS.</span>}
+          {!small && <span>本地解密 · 加密同步</span>}
         </div>
       </div>
     </>
   );
   const current = NAV.find((item) => item.id === activeTab)!;
+  const statusText =
+    status === "syncing"
+      ? "正在刷新"
+      : status === "error"
+        ? "刷新失败"
+        : status === "partial"
+          ? "部分设备未读取"
+          : checkedAt
+            ? `已检查 ${new Date(checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
+            : "尚未检查";
   return (
     <div className={`workspace ${collapsed ? "is-collapsed" : ""}`}>
       <a
@@ -232,7 +245,9 @@ export function WorkspaceShell(props: Props) {
       >
         跳转到主要内容
       </a>
-      <aside className="sidebar">{nav(collapsed)}</aside>
+      <aside className="sidebar" aria-label="工作区侧边栏">
+        {nav(collapsed)}
+      </aside>
       <dialog
         ref={dialog}
         className="mobile-sidebar"
@@ -259,29 +274,28 @@ export function WorkspaceShell(props: Props) {
             <button
               className="icon-button mobile-only"
               aria-label="打开导航菜单"
+              aria-expanded={mobileOpen}
               onClick={() => onMobile(true)}
             >
               <Menu size={20} />
             </button>
+            <span className="topbar-workspace">工作区</span>
+            <span className="breadcrumb-divider" aria-hidden="true">
+              /
+            </span>
             <span className="topbar-context">{current.label}</span>
           </div>
           <div className="topbar-actions">
             <span
               className={`sync-label ${status === "error" || status === "partial" ? "warning-text" : ""}`}
               role="status"
+              aria-label={statusText}
+              title={`${statusText} · ${refreshSeconds ? `每 ${refreshSeconds} 秒自动检查` : "手动刷新模式"}`}
             >
               <span
                 className={`status-dot ${status === "syncing" ? "pulsing" : status === "synced" ? "" : "amber"}`}
               />
-              {status === "syncing"
-                ? "正在刷新"
-                : status === "error"
-                  ? "刷新失败"
-                  : status === "partial"
-                    ? "部分设备未读取"
-                    : refreshSeconds
-                      ? "自动刷新已开启"
-                      : "手动刷新模式"}
+              {statusText}
             </span>
             <span className="topbar-separator" />
             <button
@@ -309,7 +323,6 @@ export function WorkspaceShell(props: Props) {
             >
               <LockKeyhole size={17} />
             </button>
-            <span className="topbar-avatar desktop-only">U</span>
           </div>
         </header>
         {children}

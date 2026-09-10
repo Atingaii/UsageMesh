@@ -510,9 +510,16 @@ async function decryptLedger(
   encodedKey: string,
   cache?: DashboardLoadCache,
 ): Promise<{ ledger: Ledger; source: Ledger }> {
-  const envelope = await json<LedgerEnvelope>(
+  // The heartbeat is independent of decrypting the accounting payload. Start
+  // both existing reads together so a slow heartbeat does not add a second
+  // full network wait to each refresh.
+  const envelopePromise = json<LedgerEnvelope>(
     `${RAW}/${repo}/${branch}/ledger.json`,
   );
+  const presencePromise = json<DevicePresence>(
+    `${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${branch.slice("um-ledger-".length)}/presence.json`,
+  ).catch(() => null);
+  const envelope = await envelopePromise;
   if (
     envelope.kind !== "usagemesh-encrypted-ledger" ||
     envelope.schemaVersion !== 2 ||
@@ -557,19 +564,14 @@ async function decryptLedger(
   // Heartbeats change independently from the encrypted usage payload. Refresh
   // them even on a cache hit, without mutating the cached accounting source.
   const ledger = { ...source };
-  try {
-    const presence = await json<DevicePresence>(
-      `${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${envelope.deviceHash}/presence.json`,
-    );
-    if (
-      presence.kind === "usagemesh-device-presence" &&
-      presence.schemaVersion === 1 &&
-      presence.deviceHash === envelope.deviceHash
-    )
-      ledger.presenceUpdatedAt = String(presence.updatedAt || "");
-  } catch {
-    // Older devices have no presence branch; use their ledger timestamp.
-  }
+  const presence = await presencePromise;
+  if (
+    presence?.kind === "usagemesh-device-presence" &&
+    presence.schemaVersion === 1 &&
+    presence.deviceHash === envelope.deviceHash
+  )
+    ledger.presenceUpdatedAt = String(presence.updatedAt || "");
+  // Older devices have no presence branch; use their ledger timestamp.
   return { ledger, source };
 }
 

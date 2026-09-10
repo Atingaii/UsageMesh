@@ -116,8 +116,8 @@ export const Analytics = memo(function Analytics({
     ],
   ];
   return (
-    <div className="view-stack">
-      <div className="analysis-stats">
+    <div className="view-stack analytics-view">
+      <div className="analysis-stats" aria-label="当前范围分析汇总">
         {stats.map(([label, value, note]) => (
           <div className="panel" key={label}>
             <span>{label}</span>
@@ -188,29 +188,17 @@ export const Analytics = memo(function Analytics({
             {!groups.length && <EmptyState />}
           </div>
           <div className="concentration">
-            <span className="eyebrow">TOP 3 CONCENTRATION</span>
-            <strong>
-              {top3.toFixed(1)}
-              <small>%</small>
-            </strong>
-            <p>前三项贡献占比</p>
-            <div className="progress-track">
-              <div style={{ width: `${top3}%` }} />
-            </div>
+            <span>前三项贡献</span>
+            <strong>{top3.toFixed(1)}%</strong>
             <p className="muted small">
               共 {groups.length} 项。
               {groups.length > 14
                 ? "图表展示前 14 项，其余项已计入占比分母。"
-                : "切换维度，了解用量集中在哪里。"}
+                : "已展示全部贡献项。"}
             </p>
           </div>
         </div>
       </Section>
-      <UsageTable
-        rows={requests}
-        requests
-        limitNote="展示当前各设备账本内保留的请求记录；设备端滚动保留近期明细，并非完整历史。前端不再额外截断，可分页查看或全部导出。"
-      />
       <Section
         title="设备 × 模型用量矩阵"
         subtitle="展示用量最高的 6 台设备与 6 个模型"
@@ -322,6 +310,11 @@ export const Analytics = memo(function Analytics({
           {!combinations.length && <EmptyState />}
         </div>
       </Section>
+      <UsageTable
+        rows={requests}
+        requests
+        limitNote="展示当前各设备账本内保留的请求记录；设备端滚动保留近期明细，并非完整历史。前端不再额外截断，可分页查看或全部导出。"
+      />
     </div>
   );
 });

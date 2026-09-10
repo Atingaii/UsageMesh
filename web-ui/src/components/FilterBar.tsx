@@ -1,5 +1,5 @@
 import { SavedViews } from "./SavedViews";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
@@ -29,6 +29,7 @@ export function FilterBar({
   repo: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const advancedId = useId();
   const selected = (Object.keys(FILTER_LABELS) as Dimension[]).filter(
     (key) => filters[key] !== "all",
   );
@@ -78,6 +79,7 @@ export function FilterBar({
           <button
             className={`button ghost ${expanded ? "active-text" : ""}`}
             aria-expanded={expanded}
+            aria-controls={advancedId}
             onClick={() => setExpanded(!expanded)}
           >
             <SlidersHorizontal size={15} />
@@ -97,31 +99,34 @@ export function FilterBar({
           </button>
         </div>
       </div>
+      <div className="filter-row filter-common">
+        {select("device")}
+        {select("tool")}
+        {select("model")}
+        <span className="filter-spacer" />
+      </div>
       {expanded && (
-        <div className="filter-row">
-          {select("device")}
-          {select("tool")}
-          {select("model")}
-          <span className="filter-spacer" />
-          <SavedViews
-            key={repo}
-            repo={repo}
-            filters={filters}
-            onChange={onChange}
-          />
-        </div>
-      )}
-      {expanded && (
-        <div className="filter-row advanced-filters">
-          {(
-            [
-              "vendor",
-              "routeProvider",
-              "routeType",
-              "rawProvider",
-              "tier",
-            ] as Dimension[]
-          ).map(select)}
+        <div id={advancedId} className="filter-details">
+          <div className="filter-row advanced-filters">
+            {(
+              [
+                "vendor",
+                "routeProvider",
+                "routeType",
+                "rawProvider",
+                "tier",
+              ] as Dimension[]
+            ).map(select)}
+          </div>
+          <div className="filter-saved-row">
+            <span>快速恢复常用筛选条件</span>
+            <SavedViews
+              key={repo}
+              repo={repo}
+              filters={filters}
+              onChange={onChange}
+            />
+          </div>
         </div>
       )}
       {filters.timeRange === "custom" && (

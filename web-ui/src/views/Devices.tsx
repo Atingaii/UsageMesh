@@ -89,83 +89,102 @@ export function Devices({
             <option value="offline">离线</option>
           </select>
         </div>
-        <div className="device-grid">
-          {visible.map((device) => {
-            const Icon = device.platform === "Linux" ? Server : Laptop;
-            const label =
-              device.status === "online"
-                ? "在线"
-                : device.status === "syncing"
-                  ? "心跳延迟"
-                  : "离线";
-            return (
-              <article className="device-card" key={device.id}>
-                <div className="device-card-heading">
-                  <span className="device-platform">
-                    <Icon size={23} />
-                  </span>
-                  <Badge
-                    tone={
-                      device.status === "online"
-                        ? "success"
-                        : device.status === "syncing"
-                          ? "warning"
-                          : ""
-                    }
-                  >
-                    <span
-                      className={`status-dot ${device.status === "online" ? "" : device.status === "syncing" ? "amber" : "gray"}`}
-                    />
-                    {label}
-                  </Badge>
-                </div>
-                <h3>{device.name}</h3>
-                <p>
-                  {device.platform}
-                  <span> / </span>
-                  {device.architecture}
-                </p>
-                <div className="device-metrics">
-                  <div>
-                    <strong>{compact(device.totalTokens)}</strong>
-                    <span>Tokens</span>
-                  </div>
-                  <div>
-                    <strong>
+        <div
+          className="table-scroll device-table-scroll"
+          tabIndex={0}
+          role="region"
+          aria-label="设备列表，可横向滚动"
+        >
+          <table className="device-table">
+            <caption className="sr-only">
+              已连接设备的心跳、账本和历史用量
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">设备</th>
+                <th scope="col">状态</th>
+                <th scope="col" className="numeric">
+                  Tokens
+                </th>
+                <th scope="col" className="numeric">
+                  估算费用
+                </th>
+                <th scope="col" className="numeric">
+                  请求
+                </th>
+                <th scope="col">最近同步</th>
+                <th scope="col">CLI 版本</th>
+                <th scope="col">
+                  <span className="sr-only">操作</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((device) => {
+                const Icon = device.platform === "Linux" ? Server : Laptop;
+                const label =
+                  device.status === "online"
+                    ? "在线"
+                    : device.status === "syncing"
+                      ? "心跳延迟"
+                      : "离线";
+                return (
+                  <tr key={device.id}>
+                    <td>
+                      <div className="device-identity">
+                        <span className="device-platform">
+                          <Icon size={18} />
+                        </span>
+                        <div>
+                          <strong>{device.name}</strong>
+                          <small>
+                            {device.platform} / {device.architecture}
+                          </small>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <Badge
+                        tone={
+                          device.status === "online"
+                            ? "success"
+                            : device.status === "syncing"
+                              ? "warning"
+                              : ""
+                        }
+                      >
+                        <span
+                          className={`status-dot ${device.status === "online" ? "" : device.status === "syncing" ? "amber" : "gray"}`}
+                        />
+                        {label}
+                      </Badge>
+                    </td>
+                    <td className="numeric">{compact(device.totalTokens)}</td>
+                    <td className="numeric">
                       {device.costLowerBound ? "≥ " : ""}
                       {money(device.cost)}
-                    </strong>
-                    <span>估算费用</span>
-                  </div>
-                  <div>
-                    <strong>{compact(device.requestsCount)}</strong>
-                    <span>请求</span>
-                  </div>
-                </div>
-                <dl>
-                  <div>
-                    <dt>最近心跳</dt>
-                    <dd>{dateTime(device.presenceAt)}</dd>
-                  </div>
-                  <div>
-                    <dt>账本更新</dt>
-                    <dd>{dateTime(device.lastSync)}</dd>
-                  </div>
-                  <div>
-                    <dt>CLI 版本</dt>
-                    <dd>{device.appVersion}</dd>
-                  </div>
-                </dl>
-                <button
-                  className="text-button"
-                  onClick={() => onInspect(device.name)}
-                >
-                  查看设备用量
-                  <ArrowRight size={14} />
-                </button>
-              </article>
-            );
-          })}
+                    </td>
+                    <td className="numeric">{compact(device.requestsCount)}</td>
+                    <td className="device-sync-cell">
+                      <span>心跳 {dateTime(device.presenceAt)}</span>
+                      <small>账本 {dateTime(device.lastSync)}</small>
+                    </td>
+                    <td className="mono">{device.appVersion}</td>
+                    <td>
+                      <button
+                        className="text-button"
+                        aria-label={`查看 ${device.name} 的设备用量`}
+                        onClick={() => onInspect(device.name)}
+                      >
+                        查看用量
+                        <ArrowRight size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
         {!visible.length && (
           <EmptyState

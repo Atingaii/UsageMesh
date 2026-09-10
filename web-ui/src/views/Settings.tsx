@@ -51,21 +51,6 @@ export function Settings({
   return (
     <div className="settings-grid">
       <div className="view-stack">
-        <Section
-          title="本地工作台"
-          subtitle="在本机管理供应商、额度、项目账本和系统提醒"
-        >
-          <div className="settings-body">
-            <p>
-              安装 UsageMesh 2.7.0
-              或更新版本后，在终端运行以下命令。浏览器会打开独立的本地管理页面。
-            </p>
-            <CopyCommand command="usagemesh serve" />
-            <p>
-              使用终端显示的完整启动链接连接；本地配置、密钥和项目数据不会上传此云端面板。
-            </p>
-          </div>
-        </Section>
         <Section title="界面外观" subtitle="选择适合你的亮度与阅读字号">
           <div className="settings-body">
             <label className="setting-row">
@@ -87,7 +72,7 @@ export function Settings({
                 <option value="large">大字 · 放大 12.5%</option>
               </select>
             </label>
-            <div className="theme-options">
+            <div className="theme-options" role="group" aria-label="配色模式">
               {(
                 [
                   ["light", "浅色", Sun],
@@ -101,11 +86,6 @@ export function Settings({
                   aria-pressed={preferences.theme === value}
                   onClick={() => onChange({ ...preferences, theme: value })}
                 >
-                  <span className={`theme-preview ${value}`}>
-                    <i />
-                    <i />
-                    <i />
-                  </span>
                   <span>
                     <Icon size={16} />
                     {label}
@@ -294,6 +274,21 @@ export function Settings({
             </p>
             <p>修改工作区密码，请在已加入的设备运行：</p>
             <CopyCommand command="usagemesh password" />
+          </div>
+        </Section>
+        <Section
+          title="本地工作台"
+          subtitle="在本机管理供应商、额度、项目账本和系统提醒"
+        >
+          <div className="settings-body">
+            <p>
+              安装 UsageMesh 2.7.0
+              或更新版本后，在终端运行以下命令。浏览器会打开独立的本地管理页面。
+            </p>
+            <CopyCommand command="usagemesh serve" />
+            <p>
+              使用终端显示的完整启动链接连接；本地配置、密钥和项目数据不会上传此云端面板。
+            </p>
           </div>
         </Section>
       </div>
