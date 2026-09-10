@@ -21,6 +21,22 @@ describe("订阅工作台", () => {
     expect(screen.getByText("$850.00 ÷ 57 × 100 = $1,491.23")).toBeTruthy();
     expect(screen.getByRole("button", { name: "导出本周期 CSV" })).toBeTruthy();
   });
+  it("同一分钟先采账本后读额度可估算，跨分钟缺口仍提示等待", () => {
+    const now = Date.parse("2026-09-11T00:30:45Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const data = subscriptionFixture(now);
+    data.lastSync = new Date(now - 30000).toISOString();
+    const { rerender } = render(<QuotaCycles dataset={data} />);
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    rerender(
+      <QuotaCycles
+        dataset={{ ...data, lastSync: "2026-09-11T00:29:59.999Z" }}
+      />,
+    );
+    expect(screen.queryByText("≈ $1,491.23")).toBeNull();
+    expect(screen.getByText("等待账本同步完对应分钟")).toBeTruthy();
+  });
   it("历史只归档实际到期周期，保留末次观测而非结算值", () => {
     const data = subscriptionFixture();
     const cycle = data.officialQuota!.cycles[0];

@@ -218,7 +218,15 @@ export function aggregateQuotaCycle(
   };
 }
 
-/** API-equivalent value at 100% quota, not a time-based spending forecast. */
+/** The ledger must cover the last complete minute before the quota observation. */
+export function cycleCostSyncPending(
+  syncedAt: string,
+  observedAt: string,
+): boolean {
+  return time(syncedAt) < Math.floor(time(observedAt) / 60_000) * 60_000;
+}
+
+/** API-equivalent value at 100% quota, using only complete accounting minutes. */
 export function forecastCycleCost(
   aggregation: CycleAggregation,
   usedPercent: number,
@@ -235,6 +243,7 @@ export function forecastCycleCost(
 } | null {
   const { from, to } = aggregation.bounds;
   const asOf = time(observedAt);
+  const costCutoff = Math.floor(asOf / 60_000) * 60_000;
   const syncedMs = time(syncedAt);
   if (
     ![from, to, asOf, syncedMs, nowMs, usedPercent].every(Number.isFinite) ||
@@ -245,14 +254,14 @@ export function forecastCycleCost(
     asOf < from ||
     asOf > nowMs ||
     nowMs - asOf > 15 * 60_000 ||
-    syncedMs < asOf
+    cycleCostSyncPending(syncedAt, observedAt)
   )
     return null;
   let recorded = 0,
     count = 0,
     partialPricing = false;
   for (const row of aggregation.rows) {
-    if (row.timestampMs + 60_000 > asOf) continue;
+    if (row.timestampMs + 60_000 > costCutoff) continue;
     if (!Number.isFinite(row.cost) || row.cost < 0) return null;
     recorded += row.cost;
     count++;

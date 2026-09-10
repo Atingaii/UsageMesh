@@ -6,6 +6,7 @@ import {
   fullQuotaWindow,
   quotaCycleStatus,
   forecastCycleCost,
+  cycleCostSyncPending,
   cycleBounds,
   mergeOfficialQuotaData,
 } from "../src/lib/quotaCycles";
@@ -667,6 +668,55 @@ describe("按额度比例估算周期金额", () => {
       ])?.recorded,
     ).toBe(50);
   });
+  it.each([
+    [iso(10, 30, 2), iso(10, 30, 43)],
+    [iso(10, 30), iso(10, 30, 43)],
+    [iso(10, 30), iso(10, 30)],
+  ])("账本 %s 已覆盖观测 %s 的完整分钟即可估算", (synced, observed) => {
+    expect(cycleCostSyncPending(synced, observed)).toBe(false);
+    const result = estimate(
+      [
+        usage(),
+        usage({ timestampMs: Date.parse(iso(10, 29)), cost: 10 }),
+        usage({ timestampMs: Date.parse(iso(10, 30)), cost: 900 }),
+        usage({ timestampMs: Date.parse(iso(10, 40)), cost: 1000 }),
+      ],
+      25,
+      observed,
+      synced,
+      Date.parse(observed),
+    );
+    expect(result).toMatchObject({
+      recorded: 60,
+      total: 240,
+      asOf: Date.parse(observed),
+    });
+  });
+  it("跨分钟尚未覆盖最新闭合桶，即使已有早期消费也继续等待", () => {
+    const synced = new Date(Date.parse(iso(10, 30)) - 1).toISOString();
+    const observed = iso(10, 30, 2);
+    expect(cycleCostSyncPending(synced, observed)).toBe(true);
+    expect(
+      estimate([usage()], 25, observed, synced, Date.parse(observed)),
+    ).toBeNull();
+  });
+  it("非整分钟对齐的旧记录也不能越过统一金额截止边界", () => {
+    const observed = iso(10, 30, 43);
+    expect(
+      estimate(
+        [
+          usage(),
+          usage({ timestampMs: Date.parse(iso(10, 28, 20)), cost: 10 }),
+          usage({ timestampMs: Date.parse(iso(10, 29, 20)), cost: 900 }),
+          usage({ timestampMs: Date.parse(iso(10, 30, 44)), cost: 1000 }),
+        ],
+        25,
+        observed,
+        iso(10, 30, 2),
+        Date.parse(observed),
+      ),
+    ).toMatchObject({ recorded: 60, total: 240 });
+  });
   it("零用量、非法比例和没有计价金额不产生虚构值", () => {
     for (const value of [0, -1, 101, NaN, Infinity])
       expect(estimate([usage()], value)).toBeNull();
@@ -678,7 +728,7 @@ describe("按额度比例估算周期金额", () => {
     ])
       expect(estimate(rows)).toBeNull();
   });
-  it("过期、未来、未同步到观测时点和已结束周期不预测", () => {
+  it("过期、未来、未同步到完整分钟和已结束周期不预测", () => {
     expect(estimate([usage()], 25, iso(10, 10), iso(10, 30))).toBeNull();
     expect(estimate([usage()], 25, iso(10, 45))).toBeNull();
     expect(estimate([usage()], 25, iso(10, 30), iso(10, 20))).toBeNull();
@@ -686,6 +736,7 @@ describe("按额度比例估算周期金额", () => {
       estimate([usage()], 25, iso(11), iso(11), Date.parse(iso(11))),
     ).toBeNull();
     expect(estimate([usage()], 25, "invalid")).toBeNull();
+    expect(estimate([usage()], 25, iso(10, 30), "invalid")).toBeNull();
   });
   it("100% 时剩余额度价值为零；部分计价保留提示", () => {
     expect(estimate([usage({ costLowerBound: true })], 100)).toMatchObject({

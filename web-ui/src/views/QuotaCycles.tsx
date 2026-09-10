@@ -20,6 +20,7 @@ import {
 import {
   aggregateQuotaCycle,
   forecastCycleCost,
+  cycleCostSyncPending,
   formatWindowDuration,
   type CycleAggregation,
   type CycleGroup,
@@ -409,8 +410,11 @@ function CurrentWindow({
               ? "周期内额度已调整，暂无法换算总金额"
               : !result?.rows.length
                 ? "等待本周期用量记录"
-                : Date.parse(dataset.lastSync) < snapshotTime
-                  ? "等待账本同步到额度观测时刻"
+                : cycleCostSyncPending(
+                      dataset.lastSync,
+                      item.snapshot.updatedAt,
+                    )
+                  ? "等待账本同步完对应分钟"
                   : "暂无可用于估算的计价记录";
   return (
     <section className="sub-panel sub-activity" aria-label="本周期用量">
