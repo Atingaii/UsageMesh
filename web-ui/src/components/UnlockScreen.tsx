@@ -18,28 +18,44 @@ export function UnlockScreen({
   onUnlock,
   error,
   notice,
+  verified = false,
+  passwordInvalid = false,
+  loading = false,
+  onRetry,
+  onReset,
 }: {
-  onUnlock: (password: string) => Promise<void>;
+  onUnlock: (password: string) => Promise<boolean | void>;
   error: string | null;
   notice: string | null;
+  verified?: boolean;
+  passwordInvalid?: boolean;
+  loading?: boolean;
+  onRetry?: () => Promise<void>;
+  onReset?: () => void;
 }) {
   const [busy, setBusy] = useState(false),
     [visible, setVisible] = useState(false);
+  const working = busy || loading;
   const alert = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (error) alert.current?.focus();
   }, [error]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy) return;
+    if (working) return;
     const form = event.currentTarget;
-    const password = String(new FormData(form).get("password") || "");
-    if (!password) return;
-    form.reset();
+    const password = verified
+      ? ""
+      : String(new FormData(form).get("password") || "");
+    if (!verified && !password) return;
     setVisible(false);
     setBusy(true);
     try {
-      await onUnlock(password);
+      if (verified) {
+        await onRetry?.();
+      } else if ((await onUnlock(password)) !== false) {
+        form.reset();
+      }
     } finally {
       setBusy(false);
     }
@@ -111,59 +127,70 @@ export function UnlockScreen({
               私有工作区
             </span>
           </div>
-          <h2>欢迎回到工作区</h2>
-          <p>输入 Dashboard 密码，解锁你的用量洞察。</p>
+          <h2>{verified ? "工作区已验证" : "欢迎回到工作区"}</h2>
+          <p>
+            {verified
+              ? working
+                ? "正在读取设备数据，密码无需重复输入。"
+                : "暂未读到设备数据，可直接重试，无需再次输入密码。"
+              : "输入 Dashboard 密码，解锁你的用量洞察。"}
+          </p>
           <div className="repo-label">
             <Github size={16} />
-            <span>{repoFromLocation()}</span>
+            <span translate="no">{repoFromLocation()}</span>
           </div>
           <form
             className="auth-form"
             onSubmit={submit}
             aria-label="解锁工作区"
-            aria-busy={busy}
+            aria-busy={working}
           >
-            <input
-              type="text"
-              name="username"
-              autoComplete="username"
-              value={repoFromLocation()}
-              readOnly
-              hidden
-            />
-            <div className="auth-field">
-              <label htmlFor="password">工作区密码</label>
-              <div className={`password-input ${error ? "is-invalid" : ""}`}>
-                <KeyRound size={17} />
+            {!verified && (
+              <>
                 <input
-                  id="password"
-                  name="password"
-                  type={visible ? "text" : "password"}
-                  autoComplete="current-password"
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={
-                    error
-                      ? "unlock-error"
-                      : notice
-                        ? "unlock-notice"
-                        : undefined
-                  }
-                  placeholder="输入 Dashboard 密码"
-                  required
-                  disabled={busy}
+                  type="hidden"
+                  name="username"
+                  autoComplete="username"
+                  value={repoFromLocation()}
+                  readOnly
                 />
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={visible ? "隐藏密码" : "显示密码"}
-                  aria-pressed={visible}
-                  disabled={busy}
-                  onClick={() => setVisible(!visible)}
-                >
-                  {visible ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
-              </div>
-            </div>
+                <div className="auth-field">
+                  <label htmlFor="password">工作区密码</label>
+                  <div
+                    className={`password-input ${passwordInvalid ? "is-invalid" : ""}`}
+                  >
+                    <KeyRound size={17} />
+                    <input
+                      id="password"
+                      name="password"
+                      type={visible ? "text" : "password"}
+                      autoComplete="current-password"
+                      aria-invalid={passwordInvalid}
+                      aria-describedby={
+                        error
+                          ? "unlock-error"
+                          : notice
+                            ? "unlock-notice"
+                            : undefined
+                      }
+                      placeholder="输入 Dashboard 密码"
+                      required
+                      disabled={working}
+                    />
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={visible ? "隐藏密码" : "显示密码"}
+                      aria-pressed={visible}
+                      disabled={working}
+                      onClick={() => setVisible(!visible)}
+                    >
+                      {visible ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
             {error && (
               <div
                 id="unlock-error"
@@ -186,14 +213,30 @@ export function UnlockScreen({
             )}
             <button
               className="button primary auth-submit"
-              disabled={busy}
+              disabled={working}
               type="submit"
             >
-              {busy ? "正在解密工作区…" : "解锁工作区"}
+              {working
+                ? verified
+                  ? "正在读取设备数据…"
+                  : "正在验证并读取…"
+                : verified
+                  ? "重新读取数据"
+                  : "解锁工作区"}
               <ArrowRight size={17} />
             </button>
+            {verified && onReset && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={working}
+                onClick={onReset}
+              >
+                重新输入密码
+              </button>
+            )}
             <span role="status" className="sr-only">
-              {busy ? "正在解密并读取设备数据" : ""}
+              {working ? "正在验证或读取工作区数据" : ""}
             </span>
           </form>
           <div className="auth-security">

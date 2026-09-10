@@ -3,6 +3,7 @@ import {
   createDashboardLoadCache,
   loadDashboardWithKey,
   workspaceKey,
+  WorkspacePasswordError,
 } from "../src/lib/data";
 import { encryptedAccess, encryptedLedger } from "./fixtures";
 import { subscriptionFixture } from "./subscriptionFixture";
@@ -11,13 +12,26 @@ const repo = "test/UsageMesh",
   password = "fixture-password-only";
 const key = new Uint8Array(32).fill(7),
   encoded = Buffer.from(key).toString("base64url");
+function githubFilePath(url: string): string {
+  const address = new URL(url);
+  if (address.hostname === "api.github.com") {
+    const file = address.pathname.split("/contents/")[1];
+    return `${address.searchParams.get("ref")}/${file}`;
+  }
+  return String(url).split(`${repo}/`)[1] || String(url);
+}
 function fetchResponses(responses: Record<string, unknown>) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      const path = String(url).split(`${repo}/`)[1] || String(url);
+      const file = githubFilePath(String(url));
+      const path =
+        String(url).startsWith("https://api.github.com/") &&
+        `api:${file}` in responses
+          ? `api:${file}`
+          : file;
       const value = responses[path];
-      if (value instanceof Error) throw value;
+      if (value instanceof Error || value instanceof DOMException) throw value;
       if (value instanceof Response) return value.clone();
       return new Response(JSON.stringify(responses[path] ?? {}), {
         status: path in responses ? 200 : 404,
@@ -98,6 +112,181 @@ describe("现有工作区与加密兼容", () => {
     const data = await loadDashboardWithKey(repo, encoded);
     expect(data.devices).toHaveLength(0);
     expect(data.warnings).toHaveLength(0);
+  });
+});
+
+describe("GitHub 官方备用读取", () => {
+  it("正常读取不调用 API，错误密码仍由解密结果识别", async () => {
+    fetchResponses({
+      "um-dashboard/access.json": await encryptedAccess(
+        repo,
+        password,
+        key,
+        100_000,
+      ),
+    });
+    await expect(workspaceKey(repo, password)).resolves.toBe(encoded);
+    await expect(workspaceKey(repo, "incorrect")).rejects.toBeInstanceOf(
+      WorkspacePasswordError,
+    );
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.every(([url]) =>
+          String(url).startsWith("https://raw.githubusercontent.com/"),
+        ),
+    ).toBe(true);
+  });
+
+  it.each([
+    new TypeError("Failed to fetch"),
+    new DOMException("interrupted", "TimeoutError"),
+    new Response("", { status: 408 }),
+    new Response("", { status: 429 }),
+    new Response("", { status: 503 }),
+  ])("RAW 暂时失败时，从同一仓库分支的官方 API 解锁", async (failure) => {
+    fetchResponses({
+      "um-dashboard/access.json": failure,
+      "api:um-dashboard/access.json": await encryptedAccess(
+        repo,
+        password,
+        key,
+        100_000,
+      ),
+    });
+    await expect(workspaceKey(repo, password)).resolves.toBe(encoded);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch)).toHaveBeenLastCalledWith(
+      `https://api.github.com/repos/${repo}/contents/access.json?ref=um-dashboard`,
+      expect.objectContaining({
+        cache: "no-store",
+        credentials: "omit",
+        headers: { Accept: "application/vnd.github.raw+json" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it.each([401, 403, 404])(
+    "RAW HTTP %i 不访问其他端点掩盖错误",
+    async (status) => {
+      fetchResponses({
+        "um-dashboard/access.json": new Response("", { status }),
+      });
+      await expect(workspaceKey(repo, password)).rejects.toThrow(`(${status})`);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([new Response("{invalid"), { kind: "unsupported" }])(
+    "RAW 内容损坏不进入备用读取，也不报告密码错误",
+    async (invalid) => {
+      fetchResponses({ "um-dashboard/access.json": invalid });
+      await expect(workspaceKey(repo, password)).rejects.not.toBeInstanceOf(
+        WorkspacePasswordError,
+      );
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("索引、账本和心跳都能从备用端点读取，并保留加密账本校验", async () => {
+    const envelope = await encryptedLedger("aabb", key, {
+      generatedAt: "2026-09-10T12:00:00Z",
+      device: { id: "aabb", name: "Mac" },
+      rows: [{ costUsd: 12 }],
+    });
+    const responses = {
+      "um-index/index.json": new TypeError("Failed to fetch"),
+      "api:um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": new TypeError("Failed to fetch"),
+      "api:um-ledger-aabb/ledger.json": envelope,
+      "um-presence-aabb/presence.json": new TypeError("Failed to fetch"),
+      "api:um-presence-aabb/presence.json": {
+        kind: "usagemesh-device-presence",
+        schemaVersion: 1,
+        deviceHash: "aabb",
+        updatedAt: "2026-09-10T12:01:00Z",
+      },
+    };
+    fetchResponses(responses);
+    const result = await loadDashboardWithKey(repo, encoded);
+    expect(result.records[0].cost).toBe(12);
+    expect(result.devices[0].presenceAt).toBe("2026-09-10T12:01:00Z");
+    expect(result.warnings).toEqual([]);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(6);
+    responses["api:um-ledger-aabb/ledger.json"] = {
+      ...envelope,
+      deviceHash: "ccdd",
+    };
+    await expect(loadDashboardWithKey(repo, encoded)).rejects.toThrow(
+      "格式不受支持",
+    );
+  });
+
+  it("两个端点均无响应时，8 秒后切换，合计 20 秒结束且不会无限重试", async () => {
+    vi.useFakeTimers();
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((delay) => {
+        const controller = new AbortController();
+        setTimeout(
+          () => controller.abort(new DOMException("timed out", "TimeoutError")),
+          delay,
+        );
+        return controller.signal;
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init!.signal!.addEventListener(
+              "abort",
+              () => reject(init!.signal!.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    let finished = false;
+    const outcome = workspaceKey(repo, password).catch((error: unknown) => {
+      finished = true;
+      return error;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(7_999);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(11_999);
+      expect(finished).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await outcome).toMatchObject({ message: "数据读取超时" });
+      expect(timeout.mock.calls.map(([delay]) => delay)).toEqual([
+        8_000, 12_000,
+      ]);
+      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("索引网络失败不误报尚未同步，确认缺失仍保留接入提示", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    await expect(loadDashboardWithKey(repo, encoded)).rejects.toThrow(
+      "工作区索引读取失败：网络读取失败，请检查网络后重试",
+    );
+    fetchResponses({});
+    await expect(loadDashboardWithKey(repo, encoded)).rejects.toThrow(
+      "暂无设备索引",
+    );
   });
 });
 
@@ -218,11 +407,11 @@ describe("暂时读取失败保留上次成功快照", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string) => {
-          if (String(url).endsWith("/index.json"))
+          if (githubFilePath(String(url)).endsWith("/index.json"))
             return new Response(
               JSON.stringify({ branches: ["um-ledger-aabb"] }),
             );
-          if (String(url).endsWith("/ledger.json"))
+          if (githubFilePath(String(url)).endsWith("/ledger.json"))
             return {
               ok: true,
               json: async () => {
@@ -244,6 +433,29 @@ describe("暂时读取失败保留上次成功快照", () => {
     await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow(
       `(${status})`,
     );
+  });
+
+  it.each([401, 403, 404])(
+    "RAW 暂时失败但 API 返回 HTTP %i 时，不沿用旧快照掩盖永久失败",
+    async (status) => {
+      const { cache, responses } = await cachedWorkspace();
+      responses["um-ledger-aabb/ledger.json"] = new TypeError(
+        "Failed to fetch",
+      );
+      responses["api:um-ledger-aabb/ledger.json"] = new Response("", {
+        status,
+      });
+      await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow(
+        `(${status})`,
+      );
+    },
+  );
+
+  it("备用 API 的无效 JSON 不能沿用旧快照", async () => {
+    const { cache, responses } = await cachedWorkspace();
+    responses["um-ledger-aabb/ledger.json"] = new TypeError("Failed to fetch");
+    responses["api:um-ledger-aabb/ledger.json"] = new Response("{invalid");
+    await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow();
   });
 
   it("JSON、格式、AAD 和密文校验失败不能冒充缓存成功，也不能覆盖成功源", async () => {

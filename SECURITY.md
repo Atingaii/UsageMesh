@@ -24,7 +24,7 @@ This allows an ordinary refresh in the same tab to restore the unlocked session 
 
 A non-extractable browser key is defense in depth, not an HttpOnly server session: JavaScript already executing in the trusted dashboard origin while it is unlocked can ask WebCrypto to use that key. The restrictive CSP and absence of third-party runtime scripts therefore remain part of the security boundary.
 
-The static dashboard ships a restrictive Content Security Policy: scripts must come from the deployed site itself; network connections are limited to the site and `raw.githubusercontent.com`; objects and form submission are disabled; and referrer data is suppressed. UsageMesh does not load third-party analytics or third-party JavaScript at runtime.
+The static dashboard ships a restrictive Content Security Policy: scripts must come from the deployed site itself; network connections are limited to the site, `raw.githubusercontent.com`, and `api.github.com` (the official fallback for temporarily failed public-file reads); objects and form submission are disabled; and referrer data is suppressed. UsageMesh does not load third-party analytics or third-party JavaScript at runtime.
 
 These controls materially reduce the attack surface, but a browser or operating system that is already compromised remains outside the protection boundary. A malicious browser extension with sufficient privileges, malware, or code executing inside a compromised trusted origin may still observe decrypted data while the page is unlocked.
 

@@ -168,6 +168,11 @@ function App() {
     return (
       <UnlockScreen
         onUnlock={dashboard.unlock}
+        verified={dashboard.verified}
+        passwordInvalid={dashboard.passwordInvalid}
+        loading={dashboard.syncStatus === "syncing"}
+        onRetry={dashboard.refresh}
+        onReset={dashboard.lock}
         error={error}
         notice={sessionNotice}
       />

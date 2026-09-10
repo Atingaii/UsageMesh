@@ -339,13 +339,15 @@ export function WorkspaceQA({
         <UnlockScreen
           notice="模拟工作区已锁定。输入 demo 预览解锁流程。"
           error={unlockError}
+          passwordInvalid={Boolean(unlockError)}
           onUnlock={async (password) => {
             if (password !== "demo") {
               setUnlockError("这是模拟工作区，请输入演示密码 demo。");
-              return;
+              return false;
             }
             setUnlockError(null);
             setLocked(false);
+            return true;
           }}
         />
       </>

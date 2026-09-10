@@ -39,6 +39,7 @@ async function applyDynamicPricing(
 }
 
 const RAW = "https://raw.githubusercontent.com";
+const GITHUB_API = "https://api.github.com";
 const DEFAULT_REPO = "Atingaii/UsageMesh";
 const ACCESS_BRANCH = "um-dashboard";
 const DEVICE_INDEX_BRANCH = "um-index";
@@ -421,11 +422,24 @@ class DataReadError extends Error {
   }
 }
 
-async function json<T>(url: string): Promise<T> {
+export class WorkspacePasswordError extends Error {
+  constructor() {
+    super("Dashboard 密码不正确");
+    this.name = "WorkspacePasswordError";
+  }
+}
+
+async function json<T>(
+  url: string,
+  timeoutMs = 20_000,
+  headers?: HeadersInit,
+): Promise<T> {
   try {
     const response = await fetch(url, {
       cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+      credentials: "omit",
+      signal: AbortSignal.timeout(timeoutMs),
+      ...(headers ? { headers } : {}),
     });
     if (!response.ok)
       throw new DataReadError(
@@ -450,12 +464,39 @@ async function json<T>(url: string): Promise<T> {
   }
 }
 
+async function githubJson<T>(
+  repo: string,
+  branch: string,
+  path: string,
+): Promise<T> {
+  const repository = repo.split("/").map(encodeURIComponent).join("/");
+  const file = path.split("/").map(encodeURIComponent).join("/");
+  try {
+    return await json<T>(
+      `${RAW}/${repository}/${encodeURIComponent(branch)}/${file}`,
+      8_000,
+    );
+  } catch (error) {
+    if (!(error instanceof DataReadError) || !error.transient) throw error;
+    // Public Contents API is an independent GitHub delivery path. Only use it
+    // after a transient RAW failure; normal polling spends no API rate limit.
+    // Raw media also supports encrypted ledger files larger than 1 MB.
+    return json<T>(
+      `${GITHUB_API}/repos/${repository}/contents/${file}?ref=${encodeURIComponent(branch)}`,
+      12_000,
+      { Accept: "application/vnd.github.raw+json" },
+    );
+  }
+}
+
 export async function workspaceKey(
   repo: string,
   password: string,
 ): Promise<string> {
-  const envelope = await json<AccessEnvelope>(
-    `${RAW}/${repo}/${ACCESS_BRANCH}/access.json`,
+  const envelope = await githubJson<AccessEnvelope>(
+    repo,
+    ACCESS_BRANCH,
+    "access.json",
   );
   if (
     envelope.kind !== "usagemesh-dashboard-access" ||
@@ -510,33 +551,56 @@ export async function workspaceKey(
     if (b64url(encoded).length !== 32) throw new Error("bad key");
     return encoded;
   } catch {
-    throw new Error("Dashboard 密码不正确");
+    throw new WorkspacePasswordError();
   }
 }
 
 async function loadDeviceIndex(repo: string): Promise<string[]> {
-  const urls = [
+  let transientFailure: DataReadError | null = null;
+  const reads = [
     // The CLI updates this branch on every successful sync, so newly joined
     // devices become visible immediately without rebuilding GitHub Pages.
-    `${RAW}/${repo}/${DEVICE_INDEX_BRANCH}/index.json`,
+    () =>
+      githubJson<{ branches?: string[] }>(
+        repo,
+        DEVICE_INDEX_BRANCH,
+        "index.json",
+      ),
     // Legacy/static fallbacks keep older workspaces and transient raw GitHub
     // failures usable, but they are no longer the source of truth.
-    `${RAW}/${repo}/${ACCESS_BRANCH}/device-index.json`,
+    () =>
+      githubJson<{ branches?: string[] }>(
+        repo,
+        ACCESS_BRANCH,
+        "device-index.json",
+      ),
     ...(!new URLSearchParams(location.search).has("repo")
-      ? [new URL("device-index.json", document.baseURI).toString()]
+      ? [
+          () =>
+            json<{ branches?: string[] }>(
+              new URL("device-index.json", document.baseURI).toString(),
+            ),
+        ]
       : []),
   ];
-  for (const url of urls) {
+  for (const read of reads) {
     try {
-      const index = await json<{ branches?: string[] }>(url);
+      const index = await read();
       const branches = (index.branches || []).filter((branch) =>
         /^um-ledger-[a-f0-9]+$/i.test(branch),
       );
       if (Array.isArray(index.branches)) return [...new Set(branches)];
-    } catch {
+    } catch (error) {
+      if (error instanceof DataReadError && error.transient)
+        transientFailure = error;
       // Try the static deployment fallback next.
     }
   }
+  if (transientFailure)
+    throw new DataReadError(
+      `工作区索引读取失败：${transientFailure.message}，请检查网络后重试`,
+      true,
+    );
   throw new Error("暂无设备索引，请先在任意设备执行 usagemesh sync");
 }
 
@@ -549,11 +613,15 @@ async function decryptLedger(
   // The heartbeat is independent of decrypting the accounting payload. Start
   // both existing reads together so a slow heartbeat does not add a second
   // full network wait to each refresh.
-  const envelopePromise = json<LedgerEnvelope>(
-    `${RAW}/${repo}/${branch}/ledger.json`,
+  const envelopePromise = githubJson<LedgerEnvelope>(
+    repo,
+    branch,
+    "ledger.json",
   );
-  const presencePromise = json<DevicePresence>(
-    `${RAW}/${repo}/${PRESENCE_BRANCH_PREFIX}${branch.slice("um-ledger-".length)}/presence.json`,
+  const presencePromise = githubJson<DevicePresence>(
+    repo,
+    `${PRESENCE_BRANCH_PREFIX}${branch.slice("um-ledger-".length)}`,
+    "presence.json",
   ).catch(() => null);
   const envelope = await envelopePromise;
   if (
