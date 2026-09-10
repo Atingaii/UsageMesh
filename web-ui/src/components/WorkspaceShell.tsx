@@ -229,7 +229,7 @@ export function WorkspaceShell(props: Props) {
       : status === "error"
         ? "刷新失败"
         : status === "partial"
-          ? "部分设备未读取"
+          ? "部分设备未更新"
           : checkedAt
             ? `已检查 ${new Date(checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
             : "尚未检查";

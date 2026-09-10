@@ -227,6 +227,15 @@ describe("订阅工作台", () => {
     expect(screen.getByText(/剩余额度估算 ≈ \$641.23/)).toBeTruthy();
     expect(screen.queryByText("$880.00")).toBeNull();
   });
+  it("沿用旧账本时保留订阅与金额，并明确标记未更新", () => {
+    const data = subscriptionFixture();
+    data.retainedDeviceIds = ["mac"];
+    data.warnings = ["Mac 本次网络读取失败，沿用上次成功快照"];
+    render(<QuotaCycles dataset={data} />);
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    expect(screen.getByText(/部分设备沿用上次成功快照/)).toBeTruthy();
+    expect(screen.getByLabelText("当前官方额度")).toBeTruthy();
+  });
   it("未同步设备标明覆盖不全；已结束但未刷新的周期可在历史找到", () => {
     const data = subscriptionFixture();
     data.devices[1].lastSync = new Date(Date.now() - 3600000).toISOString();

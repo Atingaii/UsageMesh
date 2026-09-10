@@ -199,6 +199,12 @@ export function createQADataset(
     for (const snapshot of official.latest)
       snapshot.updatedAt = iso(now - 3600000);
   }
+  if (params.get("state") === "retained") {
+    data.retainedDeviceIds = [data.devices[0].id];
+    data.warnings = [
+      "模拟网络读取失败；正在沿用 MacBook Pro 上次成功快照，尚未更新",
+    ];
+  }
   if (params.get("state") === "zero") {
     for (const snapshot of official.latest)
       for (const window of snapshot.windows) {
@@ -223,7 +229,7 @@ export function WorkspaceQA({
   params?: URLSearchParams;
   dataset?: DashboardDataset;
 }) {
-  const [data] = useState(() => dataset || createQADataset(params));
+  const [data, setData] = useState(() => dataset || createQADataset(params));
   const [active, setActive] = useState<ActiveTab>(() => initialTab(params));
   const [filters, setFilters] = useState<FilterState>({ ...DEFAULT_FILTERS });
   const [collapsed, setCollapsed] = useState(false);
@@ -232,7 +238,9 @@ export function WorkspaceQA({
   const [locked, setLocked] = useState(params.get("tab") === "unlock");
   const [unlockError, setUnlockError] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>("synced");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(
+    data.warnings.length ? "partial" : "synced",
+  );
   const [preferences, setPreferences] = useState<Preferences>({
     ...DEFAULT_PREFERENCES,
     theme: params.has("dark") ? "dark" : "light",
@@ -267,6 +275,11 @@ export function WorkspaceQA({
     if (refreshTimer.current) clearTimeout(refreshTimer.current);
     setSyncStatus("syncing");
     refreshTimer.current = setTimeout(() => {
+      setData((previous) => ({
+        ...previous,
+        retainedDeviceIds: [],
+        warnings: [],
+      }));
       setCheckedAt(Date.now());
       setSyncStatus("synced");
     }, 180);

@@ -229,7 +229,9 @@ function App() {
               <strong>
                 {error
                   ? "刷新失败，正在显示上一次成功快照"
-                  : `${dataset.expectedDevices - dataset.devices.length} 台设备读取失败，当前总量不完整`}
+                  : dataset.expectedDevices > dataset.devices.length
+                    ? `${dataset.expectedDevices - dataset.devices.length} 台设备读取失败，当前总量不完整`
+                    : "部分设备更新失败，正在显示上次成功快照"}
               </strong>
               <p>
                 {error ||
@@ -285,7 +287,7 @@ function App() {
               </span>
               <span>
                 {checkedAt
-                  ? `成功检查于 ${new Date(checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
+                  ? `检查于 ${new Date(checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}`
                   : ""}
               </span>
             </div>

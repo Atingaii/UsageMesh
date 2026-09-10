@@ -361,6 +361,7 @@ function CurrentWindow({
     const ids = new Set(result.rows.map((row) => row.deviceId));
     const asOf = Date.parse(item.snapshot.updatedAt);
     return (
+      Boolean(dataset.retainedDeviceIds?.length) ||
       dataset.devices.length < dataset.expectedDevices ||
       dataset.devices.some(
         (device) =>
@@ -373,6 +374,7 @@ function CurrentWindow({
     result,
     dataset.devices,
     dataset.expectedDevices,
+    dataset.retainedDeviceIds,
     item.snapshot.updatedAt,
   ]);
   const snapshotTime = Date.parse(item.snapshot.updatedAt);
@@ -457,7 +459,9 @@ function CurrentWindow({
       >
         金额为 API 等价估算，非订阅账单。
         {partialPricing && " 部分记录未完成计价，金额可能偏低。"}
-        {partialCoverage && " 部分设备账本未齐，估算可能偏低。"}
+        {dataset.retainedDeviceIds?.length
+          ? " 部分设备沿用上次成功快照，估算可能偏低。"
+          : partialCoverage && " 部分设备账本未齐，估算可能偏低。"}
         {value && used < 5 && " 额度用量较少，估算波动可能较大。"}
         {value && <> 截止 {date(value.asOf)}。</>}
       </p>

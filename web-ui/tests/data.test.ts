@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadDashboardWithKey, workspaceKey } from "../src/lib/data";
+import {
+  createDashboardLoadCache,
+  loadDashboardWithKey,
+  workspaceKey,
+} from "../src/lib/data";
 import { encryptedAccess, encryptedLedger } from "./fixtures";
+import { subscriptionFixture } from "./subscriptionFixture";
 
 const repo = "test/UsageMesh",
   password = "fixture-password-only";
@@ -11,6 +16,9 @@ function fetchResponses(responses: Record<string, unknown>) {
     "fetch",
     vi.fn(async (url: string) => {
       const path = String(url).split(`${repo}/`)[1] || String(url);
+      const value = responses[path];
+      if (value instanceof Error) throw value;
+      if (value instanceof Response) return value.clone();
       return new Response(JSON.stringify(responses[path] ?? {}), {
         status: path in responses ? 200 : 404,
       });
@@ -90,6 +98,256 @@ describe("现有工作区与加密兼容", () => {
     const data = await loadDashboardWithKey(repo, encoded);
     expect(data.devices).toHaveLength(0);
     expect(data.warnings).toHaveLength(0);
+  });
+});
+
+describe("暂时读取失败保留上次成功快照", () => {
+  const generatedAt = "2026-09-10T12:00:00Z";
+  const presenceAt = "2026-09-10T12:01:00Z";
+  async function cachedWorkspace() {
+    const cache = createDashboardLoadCache();
+    const envelope = await encryptedLedger("aabb", key, {
+      generatedAt,
+      device: { id: "official-device", name: "Official device" },
+      rows: [{ date: "2026-09-10", costUsd: 4 }],
+      requests: [{ timestampMs: Date.parse(generatedAt), costUsd: 4 }],
+      officialQuota: subscriptionFixture(Date.parse(generatedAt)).officialQuota,
+    });
+    const responses: Record<string, unknown> = {
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": envelope,
+      "um-presence-aabb/presence.json": {
+        kind: "usagemesh-device-presence",
+        schemaVersion: 1,
+        deviceHash: "aabb",
+        updatedAt: presenceAt,
+      },
+    };
+    fetchResponses(responses);
+    const first = await loadDashboardWithKey(repo, encoded, cache);
+    return { cache, envelope, responses, first };
+  }
+
+  it("失败保留金额、官方窗口和原心跳，连续失败可重试且恢复后清除旧快照标记", async () => {
+    const { cache, responses, first } = await cachedWorkspace();
+    responses["um-ledger-aabb/ledger.json"] = new TypeError("Failed to fetch");
+    responses["um-presence-aabb/presence.json"] = {
+      ...(responses["um-presence-aabb/presence.json"] as object),
+      updatedAt: "2026-09-10T12:05:00Z",
+    };
+    const failed = await loadDashboardWithKey(repo, encoded, cache);
+    expect(failed.devices).toHaveLength(1);
+    expect(failed.expectedDevices).toBe(1);
+    expect(failed.records).toBe(first.records);
+    expect(failed.requests).toBe(first.requests);
+    expect(failed.officialQuota).toBe(first.officialQuota);
+    expect(failed.officialQuota!.latest).not.toHaveLength(0);
+    expect(failed.retainedDeviceIds).toEqual(["official-device"]);
+    expect(failed.devices[0].lastSync).toBe(generatedAt);
+    expect(failed.devices[0].presenceAt).toBe(presenceAt);
+    expect(failed.lastSync).toBe(generatedAt);
+    expect(failed.warnings).toEqual([
+      expect.stringContaining("正在沿用上次成功快照"),
+    ]);
+    expect(failed.warnings[0]).toContain(generatedAt);
+    const failedAgain = await loadDashboardWithKey(repo, encoded, cache);
+    expect(failedAgain.records).toBe(first.records);
+    expect(failedAgain.devices[0].presenceAt).toBe(presenceAt);
+    responses["um-ledger-aabb/ledger.json"] = await encryptedLedger(
+      "aabb",
+      key,
+      {
+        generatedAt: "2026-09-10T12:04:00Z",
+        device: { id: "official-device", name: "Official device" },
+        rows: [{ date: "2026-09-10", costUsd: 7 }],
+        officialQuota: subscriptionFixture(Date.parse("2026-09-10T12:04:00Z"))
+          .officialQuota,
+      },
+    );
+    const recovered = await loadDashboardWithKey(repo, encoded, cache);
+    expect(recovered.records[0].cost).toBe(7);
+    expect(recovered.devices[0].lastSync).toBe("2026-09-10T12:04:00Z");
+    expect(recovered.devices[0].presenceAt).toBe("2026-09-10T12:05:00Z");
+    expect(recovered.retainedDeviceIds).toBeUndefined();
+    expect(recovered.warnings).toEqual([]);
+  });
+
+  it("独立保留失败设备，成功设备继续更新，从未读取的设备仍缺失", async () => {
+    const { cache, responses } = await cachedWorkspace();
+    responses["um-index/index.json"] = {
+      branches: ["um-ledger-aabb", "um-ledger-ccdd", "um-ledger-eeff"],
+    };
+    responses["um-ledger-aabb/ledger.json"] = new Response("", { status: 503 });
+    responses["um-ledger-ccdd/ledger.json"] = await encryptedLedger(
+      "ccdd",
+      key,
+      {
+        generatedAt: "2026-09-10T12:05:00Z",
+        device: { id: "fresh-device" },
+        rows: [{ date: "2026-09-10", costUsd: 3 }],
+      },
+    );
+    responses["um-ledger-eeff/ledger.json"] = new Response("", { status: 503 });
+    const result = await loadDashboardWithKey(repo, encoded, cache);
+    expect(result.devices).toHaveLength(2);
+    expect(result.expectedDevices).toBe(3);
+    expect(result.records.reduce((sum, row) => sum + row.cost, 0)).toBe(7);
+    expect(result.retainedDeviceIds).toEqual(["official-device"]);
+    expect(result.warnings).toHaveLength(2);
+    expect(
+      result.warnings.find((line) => line.startsWith("um-ledger-eeff")),
+    ).not.toContain("沿用");
+    expect(result.lastSync).toBe("2026-09-10T12:05:00Z");
+  });
+
+  it.each([408, 429, 500, 502, 503, 504])(
+    "HTTP %i 可保留成功快照",
+    async (status) => {
+      const { cache, responses } = await cachedWorkspace();
+      responses["um-ledger-aabb/ledger.json"] = new Response("", { status });
+      const result = await loadDashboardWithKey(repo, encoded, cache);
+      expect(result.retainedDeviceIds).toEqual(["official-device"]);
+      expect(result.warnings[0]).toContain(`(${status})`);
+    },
+  );
+
+  it.each(["TimeoutError", "AbortError"])(
+    "响应体 %s 仍可保留快照",
+    async (name) => {
+      const { cache } = await cachedWorkspace();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (String(url).endsWith("/index.json"))
+            return new Response(
+              JSON.stringify({ branches: ["um-ledger-aabb"] }),
+            );
+          if (String(url).endsWith("/ledger.json"))
+            return {
+              ok: true,
+              json: async () => {
+                throw new DOMException("interrupted", name);
+              },
+            };
+          return new Response("", { status: 404 });
+        }),
+      );
+      const result = await loadDashboardWithKey(repo, encoded, cache);
+      expect(result.retainedDeviceIds).toEqual(["official-device"]);
+      expect(result.warnings[0]).toContain("读取超时");
+    },
+  );
+
+  it.each([401, 403, 404])("HTTP %i 不沿用旧快照", async (status) => {
+    const { cache, responses } = await cachedWorkspace();
+    responses["um-ledger-aabb/ledger.json"] = new Response("", { status });
+    await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow(
+      `(${status})`,
+    );
+  });
+
+  it("JSON、格式、AAD 和密文校验失败不能冒充缓存成功，也不能覆盖成功源", async () => {
+    const { cache, responses, envelope, first } = await cachedWorkspace();
+    for (const invalid of [
+      new Response("{invalid-json"),
+      { ...envelope, algorithm: "unsupported" },
+      { ...envelope, deviceHash: "ccdd" },
+      { ...envelope, ciphertext: "broken" },
+      await encryptedLedger("aabb", key, { rows: "not-an-array" }),
+    ]) {
+      responses["um-ledger-aabb/ledger.json"] = invalid;
+      await expect(
+        loadDashboardWithKey(repo, encoded, cache),
+      ).rejects.toThrow();
+      expect(cache.snapshot?.dataset).toBe(first);
+      expect(cache.ledgers.get("um-ledger-aabb")?.envelope).toEqual(envelope);
+    }
+    responses["um-ledger-aabb/ledger.json"] = new TypeError("Failed to fetch");
+    const retained = await loadDashboardWithKey(repo, encoded, cache);
+    expect(retained.records).toBe(first.records);
+    expect(retained.records[0].cost).toBe(4);
+    expect(retained.retainedDeviceIds).toEqual(["official-device"]);
+  });
+
+  it("新 cache、换 key、换 repo 均不能取到旧会话快照", async () => {
+    const { cache, responses } = await cachedWorkspace();
+    responses["um-ledger-aabb/ledger.json"] = new TypeError("Failed to fetch");
+    await expect(
+      loadDashboardWithKey(repo, encoded, createDashboardLoadCache()),
+    ).rejects.toThrow("网络读取失败");
+    await expect(
+      loadDashboardWithKey(repo, "other-key", cache),
+    ).rejects.toThrow("网络读取失败");
+    expect(cache.ledgers.size).toBe(0);
+    expect(cache.snapshot).toBeUndefined();
+    const workspace = await cachedWorkspace();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/index.json"))
+          return new Response(JSON.stringify({ branches: ["um-ledger-aabb"] }));
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    await expect(
+      loadDashboardWithKey("other/repo", encoded, workspace.cache),
+    ).rejects.toThrow("网络读取失败");
+    expect(workspace.cache.ledgers.size).toBe(0);
+    expect(workspace.cache.snapshot).toBeUndefined();
+  });
+
+  it("切换 scope 后晚到的旧读取不能写入新 repo 的 cache", async () => {
+    const { cache, envelope } = await cachedWorkspace();
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const address = String(url);
+        if (address.endsWith("/index.json"))
+          return new Response(JSON.stringify({ branches: ["um-ledger-aabb"] }));
+        if (address.includes(`${repo}/`) && address.endsWith("/ledger.json")) {
+          started = true;
+          return pending;
+        }
+        return new Response("", { status: 503 });
+      }),
+    );
+    const original = loadDashboardWithKey(repo, encoded, cache);
+    try {
+      await vi.waitFor(() => expect(started).toBe(true));
+      await expect(
+        loadDashboardWithKey("other/repo", encoded, cache),
+      ).rejects.toThrow("503");
+    } finally {
+      release(new Response(JSON.stringify(envelope)));
+    }
+    await original;
+    expect(cache.scope).toBe(`other/repo:${encoded}`);
+    expect(cache.ledgers.size).toBe(0);
+    expect(cache.snapshot).toBeUndefined();
+  });
+
+  it("仅解密成功但尚未构建成有效工作区的数据不能作为回退来源", async () => {
+    const cache = createDashboardLoadCache();
+    const responses: Record<string, unknown> = {
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+      "um-ledger-aabb/ledger.json": await encryptedLedger("aabb", key, {
+        device: { id: "invalid" },
+        rows: "not-an-array",
+      }),
+    };
+    fetchResponses(responses);
+    await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow();
+    expect(cache.ledgers.size).toBe(0);
+    responses["um-ledger-aabb/ledger.json"] = new TypeError("Failed to fetch");
+    await expect(loadDashboardWithKey(repo, encoded, cache)).rejects.toThrow(
+      "网络读取失败",
+    );
+    expect(cache.snapshot).toBeUndefined();
   });
 });
 

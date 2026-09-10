@@ -125,7 +125,7 @@ export function Settings({
               </select>
             </label>
             <div className="setting-row">
-              <span>最近成功检查</span>
+              <span>最近检查</span>
               <span className="mono small">
                 {checkedAt ? dateTime(checkedAt) : "尚未检查"}
               </span>

@@ -17,10 +17,13 @@ export function DataQuality({
       value: `${dataset.devices.length} / ${dataset.expectedDevices} 台`,
       note: quality.missing
         ? `${quality.missing} 台账本未读取，当前合计不包含这些设备。请检查设备页错误并重试刷新。`
-        : dataset.expectedDevices
-          ? "索引中的设备账本均已读取；不代表历史数据已完整留存。"
-          : "尚未发现设备，请接入设备并首次同步。",
-      warning: quality.missing > 0,
+        : dataset.retainedDeviceIds?.length
+          ? `${dataset.retainedDeviceIds.length} 台更新失败，暂时沿用本标签页上次成功读取的账本；等待重新同步。`
+          : dataset.expectedDevices
+            ? "索引中的设备账本均已读取；不代表历史数据已完整留存。"
+            : "尚未发现设备，请接入设备并首次同步。",
+      warning:
+        quality.missing > 0 || Boolean(dataset.retainedDeviceIds?.length),
     },
     {
       title: "设备心跳",

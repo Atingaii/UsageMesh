@@ -128,6 +128,29 @@ describe("完整工作区 QA", () => {
     expect(localStorage.getItem("usagemesh:preferences:v1")).toBeNull();
     expect(screen.getByRole("note").textContent).toContain("模拟数据");
   });
+  it("设备沿用旧快照时保持用量，模拟恢复后清除标记", async () => {
+    vi.useFakeTimers();
+    render(
+      <WorkspaceQA
+        params={new URLSearchParams("shell&tab=devices&state=retained")}
+      />,
+    );
+    expect(screen.getByText("上次快照")).toBeTruthy();
+    expect(screen.getByText("部分设备未更新")).toBeTruthy();
+    const nav = screen.getByRole("navigation", { name: "工作区导航" });
+    fireEvent.click(within(nav).getByRole("button", { name: "订阅用量" }));
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    expect(screen.getByText(/部分设备沿用上次成功快照/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "刷新数据" }));
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    expect(screen.queryByText(/部分设备沿用上次成功快照/)).toBeNull();
+    expect(screen.queryByText("部分设备未更新")).toBeNull();
+    fireEvent.click(within(nav).getByRole("button", { name: "设备管理" }));
+    expect(screen.queryByText("上次快照")).toBeNull();
+  });
   it("样本提供同账号主额度及附加额度，设备总量与账本一致", () => {
     const data = createQADataset();
     expect(

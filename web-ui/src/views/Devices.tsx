@@ -137,6 +137,9 @@ export function Devices({
                         </span>
                         <div>
                           <strong>{device.name}</strong>
+                          {dataset.retainedDeviceIds?.includes(device.id) && (
+                            <Badge tone="warning">上次快照</Badge>
+                          )}
                           <small>
                             {device.platform} / {device.architecture}
                           </small>

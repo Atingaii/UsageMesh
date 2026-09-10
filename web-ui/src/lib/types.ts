@@ -192,6 +192,8 @@ export interface DashboardDataset {
   lastSync: string;
   warnings: string[];
   expectedDevices: number;
+  /** Devices retained from this session's last successful read after a transient failure. */
+  retainedDeviceIds?: string[];
   officialQuota?: OfficialQuotaData;
 }
 

@@ -139,7 +139,14 @@ interface Ledger {
 // Owned by one unlocked hook session, never persisted or shared globally.
 export interface DashboardLoadCache {
   scope?: string;
-  ledgers: Map<string, { envelope: LedgerEnvelope; ledger: Ledger }>;
+  ledgers: Map<
+    string,
+    {
+      envelope: LedgerEnvelope;
+      ledger: Ledger;
+      lastRead?: { ledger: Ledger; source: Ledger };
+    }
+  >;
   snapshot?: { sources: Ledger[]; dataset: DashboardDataset };
 }
 export function createDashboardLoadCache(): DashboardLoadCache {
@@ -405,13 +412,42 @@ export function b64url(value: string): Uint8Array {
   return Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
 }
 
+class DataReadError extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+  ) {
+    super(message);
+  }
+}
+
 async function json<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!response.ok) throw new Error(`数据读取失败 (${response.status})`);
-  return response.json() as Promise<T>;
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok)
+      throw new DataReadError(
+        `数据读取失败 (${response.status})`,
+        response.status === 408 ||
+          response.status === 429 ||
+          (response.status >= 500 && response.status <= 599),
+      );
+    return (await response.json()) as T;
+  } catch (error) {
+    // Include response-body failures; malformed JSON and invalid envelopes are
+    // deliberately not eligible for the last successful snapshot fallback.
+    if (
+      (error instanceof Error || error instanceof DOMException) &&
+      ["TypeError", "AbortError", "TimeoutError"].includes(error.name)
+    )
+      throw new DataReadError(
+        error.name === "TypeError" ? "网络读取失败" : "数据读取超时",
+        true,
+      );
+    throw error;
+  }
 }
 
 export async function workspaceKey(
@@ -509,7 +545,7 @@ async function decryptLedger(
   branch: string,
   encodedKey: string,
   cache?: DashboardLoadCache,
-): Promise<{ ledger: Ledger; source: Ledger }> {
+): Promise<{ ledger: Ledger; source: Ledger; envelope: LedgerEnvelope }> {
   // The heartbeat is independent of decrypting the accounting payload. Start
   // both existing reads together so a slow heartbeat does not add a second
   // full network wait to each refresh.
@@ -556,7 +592,6 @@ async function decryptLedger(
         b64url(envelope.ciphertext),
       );
       source = JSON.parse(new TextDecoder().decode(plaintext)) as Ledger;
-      cache?.ledgers.set(branch, { envelope, ledger: source });
     } catch {
       throw new Error(`设备账本解密失败 (${branch})`);
     }
@@ -572,7 +607,7 @@ async function decryptLedger(
   )
     ledger.presenceUpdatedAt = String(presence.updatedAt || "");
   // Older devices have no presence branch; use their ledger timestamp.
-  return { ledger, source };
+  return { ledger, source, envelope };
 }
 
 function platformLabel(platform: string): string {
@@ -860,27 +895,38 @@ export async function loadDashboardWithKey(
   key: string,
   cache?: DashboardLoadCache,
 ): Promise<DashboardDataset> {
-  if (cache && cache.scope !== `${repo}:${key}`) {
-    cache.ledgers.clear();
+  const scope = `${repo}:${key}`;
+  if (cache && cache.scope !== scope) {
+    cache.ledgers = new Map();
     cache.snapshot = undefined;
-    cache.scope = `${repo}:${key}`;
+    cache.scope = scope;
   }
+  // Detach an in-flight load from any later repo/key switch on this cache.
+  const loadCache = cache ? { ...cache } : undefined;
   const branches = await loadDeviceIndex(repo);
   const settled = await Promise.allSettled(
-    branches.map((branch) => decryptLedger(repo, branch, key, cache)),
+    branches.map((branch) => decryptLedger(repo, branch, key, loadCache)),
   );
-  const loaded = settled
-    .filter(
-      (
-        item,
-      ): item is PromiseFulfilledResult<{ ledger: Ledger; source: Ledger }> =>
-        item.status === "fulfilled",
-    )
-    .map((item) => item.value);
+  const retained = new Map<string, Ledger>();
+  const loaded = settled.flatMap<{ ledger: Ledger; source: Ledger }>(
+    (item, index) => {
+      if (item.status === "fulfilled") return [item.value];
+      const previous = loadCache?.ledgers.get(branches[index])?.lastRead;
+      if (
+        previous &&
+        item.reason instanceof DataReadError &&
+        item.reason.transient
+      ) {
+        retained.set(branches[index], previous.ledger);
+        return [previous];
+      }
+      return [];
+    },
+  );
   const ledgers = loaded.map((item) => item.ledger);
-  if (cache)
-    for (const branch of cache.ledgers.keys()) {
-      if (!branches.includes(branch)) cache.ledgers.delete(branch);
+  if (loadCache)
+    for (const branch of loadCache.ledgers.keys()) {
+      if (!branches.includes(branch)) loadCache.ledgers.delete(branch);
     }
   if (branches.length && !ledgers.length) {
     const reason = settled.find((item) => item.status === "rejected");
@@ -890,7 +936,7 @@ export async function loadDashboardWithKey(
   }
 
   const sources = loaded.map((item) => item.source);
-  const previous = cache?.snapshot;
+  const previous = loadCache?.snapshot;
   const unchanged =
     previous &&
     previous.sources.length === sources.length &&
@@ -951,7 +997,7 @@ export async function loadDashboardWithKey(
   const warnings = settled.flatMap((result, index) =>
     result.status === "rejected"
       ? [
-          `${branches[index]}：${result.reason instanceof Error ? result.reason.message : "读取失败"}`,
+          `${branches[index]}：${result.reason instanceof Error ? result.reason.message : "读取失败"}${retained.has(branches[index]) ? `；正在沿用上次成功快照（账本时间 ${retained.get(branches[index])!.generatedAt || "未知"}），尚未更新` : ""}`,
         ]
       : [],
   );
@@ -964,9 +1010,28 @@ export async function loadDashboardWithKey(
     lastSync,
     warnings,
     expectedDevices: branches.length,
+    ...(retained.size
+      ? {
+          retainedDeviceIds: [...retained.values()].map(
+            (ledger) => rawDeviceIdentity(ledger).id,
+          ),
+        }
+      : {}),
     ...(officialQuota ? { officialQuota } : {}),
   };
-  if (cache) cache.snapshot = { sources, dataset };
+  if (cache && cache.scope === scope && cache.ledgers === loadCache?.ledgers) {
+    settled.forEach((result, index) => {
+      if (result.status !== "fulfilled") return;
+      // Publish decrypted sources only after normalization succeeds, so a
+      // malformed update cannot replace the last usable accounting snapshot.
+      cache.ledgers.set(branches[index], {
+        envelope: result.value.envelope,
+        ledger: result.value.source,
+        lastRead: result.value,
+      });
+    });
+    cache.snapshot = { sources, dataset };
+  }
   return dataset;
 }
 
