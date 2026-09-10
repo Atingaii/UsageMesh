@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { dataset, record } from "./fixtures";
 import { QuotaCycles } from "../src/views/QuotaCycles";
@@ -39,7 +39,28 @@ it("重复调整仅显示一个周期，未来重置不显示已结束，完整�
         ],
         officialQuota: {
           version: 1,
-          latest: [],
+          latest: [
+            {
+              provider: "codex",
+              source: "codex-app-server",
+              accountKey: "qa",
+              account: "Pro",
+              limitId: "codex",
+              limitName: "Codex",
+              planType: "pro",
+              status: "observed",
+              updatedAt: iso(now),
+              windows: [
+                {
+                  name: "primary",
+                  windowMinutes: 10080,
+                  resetsAt: base.resetsAt,
+                  usedPercent: 56,
+                  remainingPercent: 44,
+                },
+              ],
+            },
+          ],
           officialUsage: [],
           cycles: [
             {
@@ -48,13 +69,31 @@ it("重复调整仅显示一个周期，未来重置不显示已结束，完整�
               lastObservedAt: iso(now - 3600000),
             },
             { ...base, segment: 6 },
+            {
+              ...base,
+              id: "replaced",
+              resetsAt: iso(now + 4 * 86400000),
+              lastObservedAt: iso(now - 7200000),
+              closedAt: iso(now - 3600000),
+            },
           ],
         },
       })}
     />,
   );
-  expect(screen.getAllByRole("option")).toHaveLength(1);
+  expect(screen.getAllByRole("option")).toHaveLength(2);
   expect(screen.queryByText(/已于 .*重置/)).toBeNull();
   expect(screen.queryByText("周期已结束，不再预测")).toBeNull();
   expect(screen.getByText("≈ $1,750.00")).toBeTruthy();
+  expect(screen.getByRole("option", { name: /^当前 ·/ })).toBeTruthy();
+  const old = screen.getByRole("option", {
+    name: /^历史（已替换）/,
+  }) as HTMLOptionElement;
+  fireEvent.change(screen.getByLabelText("官方订阅周期"), {
+    target: { value: old.value },
+  });
+  expect(screen.getByText("旧窗口已替换")).toBeTruthy();
+  expect(screen.getByText(/旧记录原定重置/)).toBeTruthy();
+  expect(screen.queryByText("当前官方快照")).toBeNull();
+  expect(screen.getByText("旧窗口已替换，不再预测")).toBeTruthy();
 });

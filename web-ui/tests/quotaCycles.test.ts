@@ -4,6 +4,7 @@ import {
   aggregateQuotaCycle,
   displayQuotaCycles,
   fullQuotaWindow,
+  quotaCycleStatus,
   forecastCycleCost,
   cycleBounds,
   mergeOfficialQuotaData,
@@ -706,4 +707,28 @@ describe("周期选择与完整窗口", () => {
       old,
     ]);
   });
+});
+
+it("未来的旧重置时间不是当前窗口，以最新官方快照为准", () => {
+  const current = cycle();
+  const old = cycle({ resetsAt: iso(12) });
+  const snapshots = [
+    snapshot(),
+    snapshot({
+      updatedAt: iso(10, 10),
+      windows: [{ ...snapshot().windows[0], resetsAt: iso(12) }],
+    }),
+  ];
+  expect(quotaCycleStatus(current, snapshots, Date.parse(iso(10, 40)))).toBe(
+    "current",
+  );
+  expect(quotaCycleStatus(old, snapshots, Date.parse(iso(10, 40)))).toBe(
+    "replaced",
+  );
+  expect(quotaCycleStatus(old, [], Date.parse(iso(10, 40)))).toBe(
+    "unconfirmed",
+  );
+  expect(quotaCycleStatus(current, snapshots, Date.parse(iso(12)))).toBe(
+    "ended",
+  );
 });

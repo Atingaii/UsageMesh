@@ -11,6 +11,7 @@ import {
   aggregateQuotaCycle,
   displayQuotaCycles,
   fullQuotaWindow,
+  quotaCycleStatus,
   forecastCycleCost,
   formatWindowDuration,
   type CycleGroup,
@@ -41,12 +42,15 @@ function resetSummary(resetsAt: string): string {
   const remainingMs = resetMs - Date.now();
   if (remainingMs <= 0) return `已于 ${dateTime(resetMs)} 重置`;
   const totalMinutes = Math.ceil(remainingMs / 60_000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
   const relative =
-    totalMinutes >= 2 * 24 * 60
-      ? `${Math.ceil(totalMinutes / (24 * 60))} 天后重置`
-      : totalMinutes >= 2 * 60
-        ? `${Math.ceil(totalMinutes / 60)} 小时后重置`
-        : `${totalMinutes} 分钟后重置`;
+    days > 0
+      ? `${days} 天 ${hours} 小时后重置`
+      : hours > 0
+        ? `${hours} 小时 ${minutes} 分钟后重置`
+        : `${minutes} 分钟后重置`;
   return `${relative} · ${dateTime(resetMs)}`;
 }
 
@@ -519,7 +523,18 @@ function LatestQuotaList({ dataset }: { dataset: DashboardDataset }) {
 
 export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
   const cycles = useMemo(
-    () => displayQuotaCycles(dataset.officialQuota?.cycles || []),
+    () =>
+      displayQuotaCycles(dataset.officialQuota?.cycles || []).sort(
+        (a, b) =>
+          Number(
+            quotaCycleStatus(b, dataset.officialQuota?.latest || []) ===
+              "current",
+          ) -
+          Number(
+            quotaCycleStatus(a, dataset.officialQuota?.latest || []) ===
+              "current",
+          ),
+      ),
     [dataset.officialQuota],
   );
   const [selectedId, setSelectedId] = useState(() =>
@@ -579,6 +594,8 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
       (a, b) =>
         Date.parse(b.snapshot.updatedAt) - Date.parse(a.snapshot.updatedAt),
     )[0];
+  const status = quotaCycleStatus(selected, dataset.officialQuota.latest);
+  const replaced = status === "replaced";
   const expired = result.bounds.to <= Date.now();
   const exactUpdatedMs = exactSnapshot
     ? Date.parse(exactSnapshot.snapshot.updatedAt)
@@ -601,7 +618,9 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
     0,
     Math.min(100, observedRemainingPercent),
   );
-  const costForecast = forecastCycleCost(result, dataset.lastSync);
+  const costForecast = replaced
+    ? null
+    : forecastCycleCost(result, dataset.lastSync);
   const stats = [
     {
       label: "Tokens",
@@ -618,9 +637,11 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
       value: costForecast ? `≈ ${money(costForecast.total)}` : "—",
       note: costForecast
         ? `API 等价估算，非账单${costForecast.partialPricing ? " · 部分计价" : ""}`
-        : expired
-          ? "周期已结束，不再预测"
-          : "等待本周期有效金额记录",
+        : replaced
+          ? "旧窗口已替换，不再预测"
+          : expired
+            ? "周期已结束，不再预测"
+            : "等待本周期有效金额记录",
     },
     {
       label: "参与设备",
@@ -640,9 +661,16 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
           >
             {cycles.map((cycle) => (
               <option key={cycleValue(cycle)} value={cycleValue(cycle)}>
-                {Date.parse(cycle.resetsAt) > Date.now()
-                  ? "进行中 · "
-                  : "历史 · "}
+                {
+                  {
+                    current: "当前 · ",
+                    replaced: "历史（已替换）· ",
+                    ended: "历史（已结束）· ",
+                    unconfirmed: "待确认 · ",
+                  }[
+                    quotaCycleStatus(cycle, dataset.officialQuota?.latest || [])
+                  ]
+                }
                 {cycleLabel(cycle)}
               </option>
             ))}
@@ -663,11 +691,13 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
             </span>
           </div>
           <Badge tone={historicalObservation ? "warning" : "success"}>
-            {expired
-              ? "历史末次观测"
-              : snapshotStale
-                ? "快照已过期"
-                : "当前官方快照"}
+            {replaced
+              ? "旧窗口已替换"
+              : expired
+                ? "历史末次观测"
+                : snapshotStale
+                  ? "快照已过期"
+                  : "当前官方快照"}
           </Badge>
         </div>
         <div className="quota-hero-main">
@@ -690,16 +720,24 @@ export function QuotaCycles({ dataset }: { dataset: DashboardDataset }) {
           <span style={{ width: `${boundedRemainingPercent}%` }} />
         </div>
         <div className="quota-hero-meta">
-          <span>{resetSummary(selected.resetsAt)}</span>
+          <span>
+            {replaced
+              ? `旧记录原定重置：${dateTime(selected.resetsAt)}`
+              : resetSummary(
+                  exactSnapshot?.window.resetsAt || selected.resetsAt,
+                )}
+          </span>
           <span>最近更新 {dateTime(observedAt)}</span>
         </div>
         {historicalObservation && (
           <p className="quota-hero-historical-note">
-            {expired
-              ? "此数值是末次官方观测，不代表周期最终用量或当前可用额度。"
-              : exactSnapshot
-                ? "官方快照超过 15 分钟未更新，此剩余比例不代表当前可用额度。"
-                : "尚无匹配的当前官方快照，暂显示末次观测。"}
+            {replaced
+              ? "此窗口已被最新官方快照替换，请选择标有“当前”的周期查看现有额度。"
+              : expired
+                ? "此数值是末次官方观测，不代表周期最终用量或当前可用额度。"
+                : exactSnapshot
+                  ? "官方快照超过 15 分钟未更新，此剩余比例不代表当前可用额度。"
+                  : "尚无匹配的当前官方快照，暂显示末次观测。"}
           </p>
         )}
       </section>

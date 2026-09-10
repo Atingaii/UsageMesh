@@ -92,6 +92,30 @@ export function displayQuotaCycles(
     .sort((a, b) => time(b.lastObservedAt) - time(a.lastObservedAt));
 }
 
+/** Current means present in the latest authoritative snapshot, not merely future-dated. */
+export function quotaCycleStatus(
+  cycle: OfficialQuotaCycle,
+  snapshots: OfficialQuotaSnapshot[],
+  nowMs = Date.now(),
+): "current" | "replaced" | "ended" | "unconfirmed" {
+  if (time(cycle.resetsAt) <= nowMs) return "ended";
+  const snapshot = snapshots
+    .filter(
+      (item) =>
+        item.accountKey === cycle.accountKey && item.limitId === cycle.limitId,
+    )
+    .sort((a, b) => time(b.updatedAt) - time(a.updatedAt))[0];
+  if (!snapshot) return "unconfirmed";
+  return snapshot.windows.some(
+    (window) =>
+      window.name === cycle.windowName &&
+      window.windowMinutes === cycle.windowMinutes &&
+      Math.abs(time(window.resetsAt) - time(cycle.resetsAt)) <= 5_000,
+  )
+    ? "current"
+    : "replaced";
+}
+
 /** Usage totals describe the whole official window, not a quota adjustment segment. */
 export function fullQuotaWindow(cycle: OfficialQuotaCycle): OfficialQuotaCycle {
   return { ...cycle, segment: 0, closedAt: null };
