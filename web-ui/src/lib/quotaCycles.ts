@@ -60,6 +60,43 @@ export function cycleBounds(cycle: OfficialQuotaCycle): CycleBounds {
   return { from, to };
 }
 
+/** One picker entry per reset window; retain the newest segment for pace forecasts. */
+export function displayQuotaCycles(
+  cycles: OfficialQuotaCycle[],
+): OfficialQuotaCycle[] {
+  const groups: OfficialQuotaCycle[][] = [];
+  for (const cycle of [...cycles].sort(
+    (a, b) => time(a.resetsAt) - time(b.resetsAt),
+  )) {
+    const group = groups.find(
+      ([first]) =>
+        first.accountKey === cycle.accountKey &&
+        first.limitId === cycle.limitId &&
+        first.windowName === cycle.windowName &&
+        first.windowMinutes === cycle.windowMinutes &&
+        Math.abs(time(first.resetsAt) - time(cycle.resetsAt)) <= 5_000,
+    );
+    if (group) group.push(cycle);
+    else groups.push([cycle]);
+  }
+  return groups
+    .map(
+      (group) =>
+        [...group].sort(
+          (a, b) =>
+            time(b.lastObservedAt) - time(a.lastObservedAt) ||
+            Number(!!a.closedAt) - Number(!!b.closedAt) ||
+            b.segment - a.segment,
+        )[0],
+    )
+    .sort((a, b) => time(b.lastObservedAt) - time(a.lastObservedAt));
+}
+
+/** Usage totals describe the whole official window, not a quota adjustment segment. */
+export function fullQuotaWindow(cycle: OfficialQuotaCycle): OfficialQuotaCycle {
+  return { ...cycle, segment: 0, closedAt: null };
+}
+
 function isOfficialSubscription(row: UsageRecord): boolean {
   return (
     row.tool.trim().toLowerCase() === "codex" &&

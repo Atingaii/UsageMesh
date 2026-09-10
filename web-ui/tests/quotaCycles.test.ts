@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { sanitizeOfficialQuota } from "../src/lib/data";
 import {
   aggregateQuotaCycle,
+  displayQuotaCycles,
+  fullQuotaWindow,
   forecastCycleCost,
   cycleBounds,
   mergeOfficialQuotaData,
@@ -677,5 +679,31 @@ describe("周期总金额预测", () => {
         Date.parse(iso(10, 30)),
       ),
     ).toBeNull();
+  });
+});
+
+describe("周期选择与完整窗口", () => {
+  it("同一重置时间的调整片段和秒级漂移只展示最新一项", () => {
+    const old = cycle({ closedAt: iso(10, 20), lastObservedAt: iso(10, 20) });
+    const latest = cycle({
+      resetsAt: iso(11, 0, 1),
+      segment: 2,
+      firstObservedAt: iso(10, 30),
+    });
+    expect(displayQuotaCycles([old, latest])).toEqual([latest]);
+    expect(cycleBounds(fullQuotaWindow(latest))).toEqual({
+      from: Date.parse(iso(10, 0, 1)),
+      to: Date.parse(iso(11, 0, 1)),
+    });
+  });
+  it("不混合不同账号或不同重置窗口，并优先最新观测", () => {
+    const old = cycle({ resetsAt: iso(12), lastObservedAt: iso(10, 10) });
+    const current = cycle();
+    const other = cycle({ accountKey: "another" });
+    expect(displayQuotaCycles([old, current, other])).toEqual([
+      current,
+      other,
+      old,
+    ]);
   });
 });
