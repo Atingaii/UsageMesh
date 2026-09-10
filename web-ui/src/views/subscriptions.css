@@ -280,6 +280,27 @@
 .sub-detail-body > .button {
   margin-top: 16px;
 }
+.sub-period-changes {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+.sub-period-changes ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+.sub-period-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.sub-period-changes time {
+  color: var(--text-muted);
+}
 .sub-rankings {
   display: grid;
   grid-template-columns: 1fr 1fr;

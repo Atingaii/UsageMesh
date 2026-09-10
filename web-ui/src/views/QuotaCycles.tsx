@@ -27,9 +27,15 @@ import {
 import {
   currentSubscriptions,
   hasConflictingAccounts,
-  subscriptionHistory,
+  subscriptionPeriods,
+  sameReset,
   type SubscriptionWindow,
 } from "../lib/subscriptions";
+import {
+  isElapsedSubscriptionPeriod,
+  type PeriodChange,
+  type SubscriptionPeriod,
+} from "../lib/subscriptionPeriods";
 import type { DashboardDataset, OfficialQuotaCycle } from "../lib/types";
 import { Badge, EmptyState } from "../components/ui";
 import { forecastQuotaCycle } from "../../../rust-cli/local-web/quota-forecast.js";
@@ -128,9 +134,11 @@ function Ranking({ title, rows }: { title: string; rows: CycleGroup[] }) {
 function UsageDetails({
   result,
   cycle,
+  changes = [],
 }: {
   result: CycleAggregation;
   cycle: OfficialQuotaCycle;
+  changes?: PeriodChange[];
 }) {
   return (
     <div className="sub-detail-body">
@@ -149,6 +157,26 @@ function UsageDetails({
           {number(result.legacyBuckets)} 个仅有日期的记录。
         </p>
       )}
+      {changes.length > 0 && (
+        <section className="sub-period-changes" aria-label="本周期额度变更">
+          <h3>本周期额度变更</h3>
+          <p className="sub-muted">
+            以下是同步时观测到的调整，归在本周期内，不单独计为历史周期。
+          </p>
+          <ul>
+            {changes.map((change, index) => (
+              <li key={`${change.at}:${index}`}>
+                <time dateTime={change.at}>{date(change.at)}</time>
+                <span>
+                  {change.kind === "reset-time"
+                    ? `重置时间：${date(String(change.before))} → ${date(String(change.after))}`
+                    : `已用额度：${number(Number(change.before))}% → ${number(Number(change.after))}%`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <button
         className="button secondary"
         onClick={() => exportRows(cycle, result)}
@@ -164,11 +192,13 @@ function CurrentWindow({
   dataset,
   now,
   multipleAccounts,
+  period,
 }: {
   item: SubscriptionWindow;
   dataset: DashboardDataset;
   now: number;
   multipleAccounts: boolean;
+  period?: SubscriptionPeriod;
 }) {
   const [details, setDetails] = useState(false);
   const result = useMemo(
@@ -225,8 +255,13 @@ function CurrentWindow({
   const used = item.window.usedPercent,
     remaining = Math.max(0, 100 - used);
   const supported = item.snapshot.limitId === "codex";
+  const quotaAdjusted = period?.changes.some(
+    (change) => change.kind === "quota-adjustment",
+  );
   const value =
-    !stale && !expired && !multipleAccounts && supported ? estimate : null;
+    !stale && !expired && !multipleAccounts && supported && !quotaAdjusted
+      ? estimate
+      : null;
   const unavailable = expired
     ? "等待重置后的官方快照"
     : stale
@@ -237,11 +272,13 @@ function CurrentWindow({
           ? "存在多个账号，暂不混算金额"
           : !supported
             ? "该额度类别尚无独立金额记录"
-            : !result?.rows.length
-              ? "等待本周期用量记录"
-              : Date.parse(dataset.lastSync) < snapshotTime
-                ? "等待账本同步到额度观测时刻"
-                : "暂无可用于估算的计价记录";
+            : quotaAdjusted
+              ? "周期内额度已调整，暂无法换算总金额"
+              : !result?.rows.length
+                ? "等待本周期用量记录"
+                : Date.parse(dataset.lastSync) < snapshotTime
+                  ? "等待账本同步到额度观测时刻"
+                  : "暂无可用于估算的计价记录";
   const pace =
     !stale &&
     !expired &&
@@ -391,7 +428,13 @@ function CurrentWindow({
               用量明细与统计口径
               <ChevronDown size={16} className={details ? "is-open" : ""} />
             </button>
-            {details && <UsageDetails result={result} cycle={item.cycle} />}
+            {details && (
+              <UsageDetails
+                result={result}
+                cycle={item.cycle}
+                changes={period?.changes}
+              />
+            )}
           </>
         )}
       </section>
@@ -400,24 +443,22 @@ function CurrentWindow({
 }
 function HistoryView({
   dataset,
-  current,
+  periods,
   now,
 }: {
   dataset: DashboardDataset;
-  current: SubscriptionWindow[];
+  periods: SubscriptionPeriod[];
   now: number;
 }) {
   const history = useMemo(
-    () => subscriptionHistory(dataset.officialQuota, current, now),
-    [dataset.officialQuota, current, now],
+    () => periods.filter((period) => isElapsedSubscriptionPeriod(period, now)),
+    [periods, now],
   );
   const [page, setPage] = useState(0),
-    [selected, setSelected] = useState<OfficialQuotaCycle | null>(null);
+    [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = history.find((period) => period.id === selectedId);
   const result = useMemo(
-    () =>
-      selected
-        ? aggregateQuotaCycle(dataset.records, { ...selected, segment: 0 })
-        : null,
+    () => (selected ? aggregateQuotaCycle(dataset.records, selected) : null),
     [dataset.records, selected],
   );
   const count = Math.max(1, Math.ceil(history.length / 12));
@@ -426,13 +467,16 @@ function HistoryView({
     return (
       <EmptyState
         title="暂无历史周期"
-        description="周期结束或官方窗口发生变更后，历史记录会显示在这里。"
+        description="当前周期到期后会归档到这里。周期内的额度调整保留在对应周期的用量明细中。"
       />
     );
   if (selected && result)
     return (
       <section className="sub-panel sub-history-detail">
-        <button className="button secondary" onClick={() => setSelected(null)}>
+        <button
+          className="button secondary"
+          onClick={() => setSelectedId(null)}
+        >
           <ArrowLeft size={16} />
           返回周期历史
         </button>
@@ -440,13 +484,19 @@ function HistoryView({
           {selected.limitName} · {formatWindowDuration(selected.windowMinutes)}
         </h2>
         <p className="sub-muted">
-          {selected.account} · 原定重置 {dateTime(selected.resetsAt)} · 末次已用{" "}
+          {selected.account} · {dateTime(selected.nominalStartAt)} —{" "}
+          {dateTime(selected.resetsAt)} · 末次已用{" "}
           {number(selected.lastUsedPercent)}%
         </p>
         <p className="sub-history-notice">
-          历史记录仅用于回顾，不代表当前额度；被替换的窗口可能与当前窗口重叠，不应相加。
+          额度最后观测于 {dateTime(selected.lastObservedAt)}
+          ，不代表完整周期的最终用量。下方账本按该周期范围汇总。
         </p>
-        <UsageDetails result={result} cycle={selected} />
+        <UsageDetails
+          result={result}
+          cycle={selected}
+          changes={selected.changes}
+        />
       </section>
     );
   return (
@@ -454,7 +504,9 @@ function HistoryView({
       <div className="sub-panel-head">
         <div>
           <h2>周期历史</h2>
-          <p className="sub-muted">已结束及被替换的窗口，仅保留末次观测。</p>
+          <p className="sub-muted">
+            按官方重置时间归档，每个周期一条；额度调整保留在周期内。
+          </p>
         </div>
         <Badge>{history.length} 条记录</Badge>
       </div>
@@ -463,7 +515,7 @@ function HistoryView({
           <button
             className="sub-history-row"
             key={`${cycle.id}:${cycle.resetsAt}:${cycle.segment}`}
-            onClick={() => setSelected(cycle)}
+            onClick={() => setSelectedId(cycle.id)}
           >
             <div>
               <strong>
@@ -474,20 +526,16 @@ function HistoryView({
               </span>
             </div>
             <div>
-              <span>原定重置</span>
-              <strong>{date(cycle.resetsAt)}</strong>
+              <span>周期范围</span>
+              <strong>
+                {date(cycle.nominalStartAt)} — {date(cycle.resetsAt)}
+              </strong>
             </div>
             <div>
               <span>末次已用</span>
               <strong>{number(cycle.lastUsedPercent)}%</strong>
             </div>
-            <Badge tone="warning">
-              {cycle.closureReason === "window-changed"
-                ? "已替换"
-                : Date.parse(cycle.resetsAt) <= Date.now()
-                  ? "已结束"
-                  : "历史观测"}
-            </Badge>
+            <Badge>已到期</Badge>
             <ArrowUpRight size={16} />
           </button>
         ))}
@@ -532,6 +580,10 @@ export const QuotaCycles = memo(function QuotaCycles({
     () => currentSubscriptions(dataset.officialQuota),
     [dataset.officialQuota],
   );
+  const periods = useMemo(
+    () => subscriptionPeriods(dataset.officialQuota, current),
+    [dataset.officialQuota, current],
+  );
   const selected =
     current.find((item) => item.key === selectedKey) || current[0];
   const accountCount = useMemo(
@@ -563,7 +615,7 @@ export const QuotaCycles = memo(function QuotaCycles({
       {view === "history" ? (
         <HistoryView
           dataset={dataset}
-          current={current}
+          periods={periods}
           now={Math.max(now, Date.now())}
         />
       ) : (
@@ -596,6 +648,14 @@ export const QuotaCycles = memo(function QuotaCycles({
               multipleAccounts={hasConflictingAccounts(
                 dataset.officialQuota,
                 selected,
+              )}
+              period={periods.find(
+                (period) =>
+                  period.accountKey === selected.snapshot.accountKey &&
+                  period.limitId === selected.snapshot.limitId &&
+                  period.windowName === selected.window.name &&
+                  period.windowMinutes === selected.window.windowMinutes &&
+                  sameReset(period.resetsAt, selected.window.resetsAt),
               )}
             />
           ) : (

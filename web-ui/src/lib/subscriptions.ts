@@ -4,7 +4,10 @@ import type {
   OfficialQuotaSnapshot,
   OfficialQuotaWindow,
 } from "./types";
-import { displayQuotaCycles } from "./quotaCycles";
+import {
+  buildSubscriptionPeriods,
+  isElapsedSubscriptionPeriod,
+} from "./subscriptionPeriods";
 
 export interface SubscriptionWindow {
   key: string;
@@ -124,31 +127,25 @@ export function currentSubscriptions(
     );
 }
 
-/** Called only when history is opened. Replaced records remain auditable, never current choices. */
+export function subscriptionPeriods(
+  data: OfficialQuotaData | undefined,
+  current: SubscriptionWindow[],
+) {
+  return buildSubscriptionPeriods(
+    data?.cycles || [],
+    current.flatMap((item) => (item.cycle ? [item.cycle] : [])),
+  );
+}
+
+/** Only elapsed calendar periods belong in history; corrections stay inside their period. */
 export function subscriptionHistory(
   data: OfficialQuotaData | undefined,
   current: SubscriptionWindow[],
   nowMs = Date.now(),
 ) {
-  return displayQuotaCycles(data?.cycles || [])
-    .filter(
-      (cycle) =>
-        !current.some(
-          (item) =>
-            Date.parse(item.window.resetsAt || "") > nowMs &&
-            item.key ===
-              windowIdentity(
-                cycle.accountKey,
-                cycle.limitId,
-                cycle.windowName,
-              ) &&
-            item.window.windowMinutes === cycle.windowMinutes &&
-            sameReset(item.window.resetsAt, cycle.resetsAt),
-        ),
-    )
-    .sort(
-      (a, b) => Date.parse(b.lastObservedAt) - Date.parse(a.lastObservedAt),
-    );
+  return subscriptionPeriods(data, current).filter((period) =>
+    isElapsedSubscriptionPeriod(period, nowMs),
+  );
 }
 
 /** An account switch can leave only one latest snapshot while older account usage remains. */

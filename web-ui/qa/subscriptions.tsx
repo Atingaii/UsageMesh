@@ -17,6 +17,25 @@ if (params.get("size") === "50000") {
     id: `large-${i}`,
   }));
 }
+if (params.get("state") === "history") {
+  const cycle = data.officialQuota!.cycles[0];
+  const shift = (at: string) =>
+    new Date(Date.parse(at) - 7 * 86400000).toISOString();
+  data.officialQuota!.cycles.push({
+    ...cycle,
+    id: "completed-week",
+    resetsAt: shift(cycle.resetsAt),
+    nominalStartAt: shift(cycle.nominalStartAt),
+    firstObservedAt: shift(cycle.firstObservedAt),
+    lastObservedAt: shift(cycle.lastObservedAt),
+    samples: cycle.samples.map((sample) => ({
+      ...sample,
+      at: shift(sample.at),
+    })),
+    closedAt: cycle.firstObservedAt,
+    closureReason: "window-changed",
+  });
+}
 if (params.get("state") === "empty")
   data.officialQuota = {
     version: 1,

@@ -335,7 +335,18 @@ export function mergeOfficialQuotaData(
         const authority = [...sources.entries()].sort((a, b) => {
           const latest = (cycles: OfficialQuotaCycle[]) =>
             Math.max(...cycles.map((cycle) => time(cycle.lastObservedAt)));
-          return latest(b[1]) - latest(a[1]);
+          const left = latest(a[1]),
+            right = latest(b[1]);
+          // A device may learn the closure without receiving another usage sample.
+          // On tied observations, retain that evidence rather than an open replica.
+          const closure = (cycles: OfficialQuotaCycle[], observed: number) =>
+            Math.max(
+              0,
+              ...cycles
+                .filter((cycle) => time(cycle.lastObservedAt) === observed)
+                .map((cycle) => time(cycle.closedAt) || 0),
+            );
+          return right - left || closure(b[1], right) - closure(a[1], left);
         })[0]?.[1];
         if (!authority) return [];
         const orderedAuthority = [...authority].sort(

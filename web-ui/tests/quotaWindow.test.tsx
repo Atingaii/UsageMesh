@@ -20,12 +20,26 @@ describe("订阅工作台", () => {
     expect(screen.getByRole("heading", { name: "设备用量" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "导出本周期 CSV" })).toBeTruthy();
   });
-  it("历史入口独立，旧窗口只显示末次观测，不计算总额度金额", () => {
-    render(<QuotaCycles dataset={subscriptionFixture()} />);
+  it("历史只归档实际到期周期，保留末次观测而非结算值", () => {
+    const data = subscriptionFixture();
+    const cycle = data.officialQuota!.cycles[0];
+    const reset = Date.parse(cycle.nominalStartAt);
+    data.officialQuota!.cycles.push({
+      ...cycle,
+      id: "elapsed",
+      resetsAt: new Date(reset).toISOString(),
+      nominalStartAt: new Date(reset - 7 * 86400000).toISOString(),
+      firstObservedAt: new Date(reset - 86400000).toISOString(),
+      lastObservedAt: new Date(reset - 60000).toISOString(),
+      samples: [{ at: new Date(reset - 60000).toISOString(), usedPercent: 57 }],
+      closedAt: cycle.firstObservedAt,
+      closureReason: "window-changed",
+    });
+    render(<QuotaCycles dataset={data} />);
     fireEvent.click(screen.getByRole("button", { name: "周期历史" }));
     expect(screen.queryByLabelText("当前官方额度")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /原定重置/ }));
-    expect(screen.getByText(/历史记录仅用于回顾/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /周期范围/ }));
+    expect(screen.getByText(/不代表完整周期的最终用量/)).toBeTruthy();
     expect(screen.queryByText("本周期总金额估算")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "返回周期历史" }));
     fireEvent.click(screen.getByRole("button", { name: "当前订阅" }));
@@ -107,7 +121,7 @@ describe("订阅工作台", () => {
     const current = currentSubscriptions(quota);
     expect(current).toHaveLength(1);
     expect(current[0].window.usedPercent).toBe(57);
-    expect(subscriptionHistory(quota, current)).toHaveLength(1);
+    expect(subscriptionHistory(quota, current)).toHaveLength(0);
   });
   it("定时更新仅使快照过期，不把百分比当实时值继续预测", () => {
     vi.useFakeTimers();
@@ -156,6 +170,28 @@ describe("订阅工作台", () => {
         current,
         Date.parse(current[0].window.resetsAt!) + 1,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+  });
+});
+
+describe("周期归档与周期内变更", () => {
+  it("提前改期留在当前明细中，不独立成为历史周期", () => {
+    render(<QuotaCycles dataset={subscriptionFixture()} />);
+    expect(screen.queryByText("本周期额度变更")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "用量明细与统计口径" }));
+    expect(
+      screen.getByRole("heading", { name: "本周期额度变更" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/重置时间：.*→/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "周期历史" }));
+    expect(screen.getByText("暂无历史周期")).toBeTruthy();
+    expect(screen.queryByText("已替换")).toBeNull();
+  });
+  it("额度下降后不拿调整前消费反推新比例对应的总金额", () => {
+    const data = subscriptionFixture();
+    data.officialQuota!.cycles[0].samples[0].usedPercent = 80;
+    render(<QuotaCycles dataset={data} />);
+    expect(screen.getByText("周期内额度已调整，暂无法换算总金额")).toBeTruthy();
+    expect(screen.queryByText("$1,491.23")).toBeNull();
   });
 });
