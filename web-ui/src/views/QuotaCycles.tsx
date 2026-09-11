@@ -175,8 +175,12 @@ function QuotaRow({
 }) {
   const observed = Date.parse(item.snapshot.updatedAt);
   const expired = Date.parse(item.window.resetsAt || "") <= now;
+  const sourceStale = item.snapshot.status === "stale";
   const stale =
-    !Number.isFinite(observed) || now - observed > 15 * 60000 || observed > now;
+    sourceStale ||
+    !Number.isFinite(observed) ||
+    now - observed > 15 * 60000 ||
+    observed > now;
   const remaining = Math.max(0, 100 - item.window.usedPercent);
   const forecast = useMemo(
     () => (item.cycle ? forecastQuotaCycle(item.cycle) : null),
@@ -238,7 +242,7 @@ function QuotaRow({
         </time>
         {stale || expired ? (
           <span className="sub-warning">
-            {expired ? "等待更新" : "快照过期"}
+            {expired ? "等待更新" : sourceStale ? "暂未更新" : "快照过期"}
           </span>
         ) : (
           exhaustsAt && (
@@ -379,7 +383,9 @@ function CurrentWindow({
   ]);
   const snapshotTime = Date.parse(item.snapshot.updatedAt);
   const expired = Date.parse(item.window.resetsAt || "") <= now;
+  const sourceStale = item.snapshot.status === "stale";
   const stale =
+    sourceStale ||
     !Number.isFinite(snapshotTime) ||
     now - snapshotTime > 15 * 60000 ||
     snapshotTime > now;
@@ -397,24 +403,26 @@ function CurrentWindow({
       : null;
   const unavailable = expired
     ? "等待重置后的官方快照"
-    : stale
-      ? "官方快照已过期，等待同步"
-      : used === 0
-        ? "额度尚未使用，暂无法估算"
-        : multipleAccounts
-          ? "存在多个账号，暂不混算金额"
-          : !supported
-            ? "该额度类别尚无独立金额记录"
-            : quotaAdjusted
-              ? "周期内额度已调整，暂无法换算总金额"
-              : !result?.rows.length
-                ? "等待本周期用量记录"
-                : cycleCostSyncPending(
-                      dataset.lastSync,
-                      item.snapshot.updatedAt,
-                    )
-                  ? "等待账本同步完对应分钟"
-                  : "暂无可用于估算的计价记录";
+    : sourceStale
+      ? "官方额度暂未更新，显示上次记录"
+      : stale
+        ? "官方快照已过期，等待同步"
+        : used === 0
+          ? "额度尚未使用，暂无法估算"
+          : multipleAccounts
+            ? "存在多个账号，暂不混算金额"
+            : !supported
+              ? "该额度类别尚无独立金额记录"
+              : quotaAdjusted
+                ? "周期内额度已调整，暂无法换算总金额"
+                : !result?.rows.length
+                  ? "等待本周期用量记录"
+                  : cycleCostSyncPending(
+                        dataset.lastSync,
+                        item.snapshot.updatedAt,
+                      )
+                    ? "等待账本同步完对应分钟"
+                    : "暂无可用于估算的计价记录";
   return (
     <section className="sub-activity" aria-label="本周期用量">
       <header className="sub-activity-head">

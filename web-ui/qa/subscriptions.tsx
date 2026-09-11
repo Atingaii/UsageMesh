@@ -199,6 +199,9 @@ export function createQADataset(
     for (const snapshot of official.latest)
       snapshot.updatedAt = iso(now - 3600000);
   }
+  if (params.get("state") === "source-stale") {
+    for (const snapshot of official.latest) snapshot.status = "stale";
+  }
   if (params.get("state") === "retained") {
     data.retainedDeviceIds = [data.devices[0].id];
     data.warnings = [

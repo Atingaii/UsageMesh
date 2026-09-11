@@ -314,6 +314,13 @@ export function mergeOfficialQuotaData(
     for (const item of value.latest) {
       const key = snapshotKey(item);
       const previous = latest.get(key);
+      // A failed refresh marks the same observation stale without changing its
+      // timestamp. An older replica must not make that observation fresh again.
+      if (
+        previous?.status === "stale" &&
+        time(previous.updatedAt) === time(item.updatedAt)
+      )
+        continue;
       latest.set(
         key,
         previous ? newer(previous, item, (entry) => entry.updatedAt) : item,

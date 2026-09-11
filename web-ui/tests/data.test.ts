@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createDashboardLoadCache,
   loadDashboardWithKey,
+  sanitizeOfficialQuota,
   workspaceKey,
   WorkspacePasswordError,
 } from "../src/lib/data";
@@ -112,6 +113,103 @@ describe("现有工作区与加密兼容", () => {
     const data = await loadDashboardWithKey(repo, encoded);
     expect(data.devices).toHaveLength(0);
     expect(data.warnings).toHaveLength(0);
+  });
+});
+
+describe("官方额度暂时读取失败", () => {
+  const observedAt = "2026-09-11T04:00:00.000Z";
+
+  it("合法 stale 保留原额度和历史，未知状态不能冒充官方观测", () => {
+    const quota = subscriptionFixture(Date.parse(observedAt)).officialQuota!;
+    const snapshot = quota.latest[0];
+    const stale = { ...snapshot, status: "stale" };
+    const cleaned = sanitizeOfficialQuota({
+      ...quota,
+      latest: [
+        stale,
+        ...["unavailable", "fresh", "inferred", "", null].map((status) => ({
+          ...snapshot,
+          status,
+        })),
+      ],
+    })!;
+    expect(cleaned.latest).toEqual([stale]);
+    expect(cleaned.latest[0].updatedAt).toBe(observedAt);
+    expect(cleaned.latest[0].windows).toEqual(snapshot.windows);
+    expect(cleaned.cycles).toEqual(quota.cycles);
+  });
+
+  it("加密账本成功读取的 fresh → stale → 新鲜快照完整保留并恢复", async () => {
+    const quota = subscriptionFixture(Date.parse(observedAt)).officialQuota!;
+    const snapshot = quota.latest[0];
+    const cache = createDashboardLoadCache();
+    const responses: Record<string, unknown> = {
+      "um-index/index.json": { branches: ["um-ledger-aabb"] },
+    };
+    fetchResponses(responses);
+    async function publish(
+      status: "observed" | "stale",
+      generatedAt: string,
+      updatedAt = observedAt,
+      usedPercent = 57,
+    ) {
+      responses["um-ledger-aabb/ledger.json"] = await encryptedLedger(
+        "aabb",
+        key,
+        {
+          generatedAt,
+          device: { id: "official-device", name: "Official device" },
+          rows: [{ date: "2026-09-11", costUsd: 7 }],
+          officialQuota: {
+            ...quota,
+            latest: [
+              {
+                ...snapshot,
+                status,
+                updatedAt,
+                windows: [
+                  {
+                    ...snapshot.windows[0],
+                    usedPercent,
+                    remainingPercent: 100 - usedPercent,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      );
+      return loadDashboardWithKey(repo, encoded, cache);
+    }
+
+    const fresh = await publish("observed", observedAt);
+    expect(fresh.officialQuota!.latest[0].status).toBe("observed");
+    const stale = await publish("stale", "2026-09-11T04:02:00.000Z");
+    expect(stale.officialQuota!.latest).toEqual([
+      { ...fresh.officialQuota!.latest[0], status: "stale" },
+    ]);
+    expect(stale.officialQuota!.cycles).toEqual(fresh.officialQuota!.cycles);
+    expect(stale.lastSync).toBe("2026-09-11T04:02:00.000Z");
+    expect(stale.records[0].cost).toBe(7);
+    expect(stale.retainedDeviceIds).toBeUndefined();
+    expect(stale.warnings).toEqual([]);
+
+    const nextAt = "2026-09-11T04:04:00.000Z";
+    const recovered = await publish("observed", nextAt, nextAt, 60);
+    expect(recovered.officialQuota!.latest[0]).toMatchObject({
+      status: "observed",
+      updatedAt: nextAt,
+      windows: [
+        {
+          usedPercent: 60,
+          remainingPercent: 40,
+          resetsAt: snapshot.windows[0].resetsAt,
+        },
+      ],
+    });
+    expect(recovered.officialQuota!.cycles).toEqual(
+      fresh.officialQuota!.cycles,
+    );
   });
 });
 

@@ -129,6 +129,95 @@ describe("订阅工作台", () => {
     rerender(<QuotaCycles dataset={{ ...missing }} />);
     expect(screen.getByText("尚无当前官方额度")).toBeTruthy();
   });
+  it("近期官方读取失败保留额度、用量和历史，暂停预测并在新快照后恢复", () => {
+    const now = Date.parse("2026-09-11T04:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const data = subscriptionFixture(now - 2 * 60000);
+    const snapshot = data.officialQuota!.latest[0];
+    const cycle = data.officialQuota!.cycles[0];
+    cycle.samples = Array.from({ length: 7 }, (_, index) => ({
+      at: new Date(now - (722 - index * 120) * 60000).toISOString(),
+      usedPercent: 51 + index,
+    }));
+    const previousReset = Date.parse(cycle.nominalStartAt);
+    data.officialQuota!.cycles.push({
+      ...cycle,
+      id: "elapsed-before-official-failure",
+      resetsAt: new Date(previousReset).toISOString(),
+      nominalStartAt: new Date(previousReset - 7 * 86400000).toISOString(),
+      firstObservedAt: new Date(previousReset - 86400000).toISOString(),
+      lastObservedAt: new Date(previousReset - 60000).toISOString(),
+      samples: [
+        { at: new Date(previousReset - 60000).toISOString(), usedPercent: 57 },
+      ],
+      closedAt: cycle.firstObservedAt,
+      closureReason: "window-changed",
+    });
+    const { rerender } = render(<QuotaCycles dataset={data} />);
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    expect(screen.getByText(/^预计 .* 耗尽$/)).toBeTruthy();
+
+    const stale = {
+      ...data,
+      officialQuota: {
+        ...data.officialQuota!,
+        latest: [{ ...snapshot, status: "stale" as const }],
+      },
+    };
+    rerender(<QuotaCycles dataset={stale} />);
+    const quotaPanel = screen.getByLabelText("当前官方额度");
+    expect(screen.queryByText("尚无当前官方额度")).toBeNull();
+    expect(within(quotaPanel).getByText("末次剩余")).toBeTruthy();
+    expect(within(quotaPanel).getByText("暂未更新")).toBeTruthy();
+    expect(
+      within(quotaPanel)
+        .getByRole("progressbar", { name: "Codex 每周额度剩余比例" })
+        .getAttribute("aria-valuenow"),
+    ).toBe("43");
+    expect(
+      quotaPanel.querySelector(".sub-quota-row time")!.getAttribute("datetime"),
+    ).toBe(snapshot.windows[0].resetsAt);
+    expect(
+      quotaPanel.querySelector(".sub-updated")!.getAttribute("datetime"),
+    ).toBe(snapshot.updatedAt);
+    const usage = within(screen.getByRole("region", { name: "本周期用量" }));
+    expect(usage.getByText("$850.00")).toBeTruthy();
+    expect(usage.getByText("756M")).toBeTruthy();
+    expect(usage.getByText("6,000")).toBeTruthy();
+    expect(usage.getByText("官方额度暂未更新，显示上次记录")).toBeTruthy();
+    expect(usage.queryByText("≈ $1,491.23")).toBeNull();
+    expect(screen.queryByText(/^预计 .* 耗尽$/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "周期历史" }));
+    fireEvent.click(screen.getByRole("button", { name: /周期范围/ }));
+    expect(screen.getByText(/不代表完整周期的最终用量/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "返回周期历史" }));
+    fireEvent.click(screen.getByRole("button", { name: "当前订阅" }));
+    expect(screen.getByText("暂未更新")).toBeTruthy();
+
+    const nextSnapshot = {
+      ...snapshot,
+      updatedAt: new Date(now).toISOString(),
+    };
+    rerender(
+      <QuotaCycles
+        dataset={{
+          ...data,
+          lastSync: nextSnapshot.updatedAt,
+          devices: data.devices.map((device) => ({
+            ...device,
+            lastSync: nextSnapshot.updatedAt,
+          })),
+          officialQuota: { ...data.officialQuota!, latest: [nextSnapshot] },
+        }}
+      />,
+    );
+    expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+    expect(screen.getByText(/^预计 .* 耗尽$/)).toBeTruthy();
+    expect(screen.queryByText("暂未更新")).toBeNull();
+    expect(screen.queryByText("末次剩余")).toBeNull();
+  });
   it("未完整计价与低消耗估算的限制在首屏可见", () => {
     const data = subscriptionFixture();
     data.records[0].costLowerBound = true;

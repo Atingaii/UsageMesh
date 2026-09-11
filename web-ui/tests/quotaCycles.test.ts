@@ -237,6 +237,44 @@ describe("官方订阅周期聚合", () => {
 });
 
 describe("多设备额度元数据归并", () => {
+  it.each([false, true])(
+    "同一观测在刷新失败后保留 stale，不受设备顺序影响（反序=%s）",
+    (reverse) => {
+      const observed = quota([snapshot()], [cycle()]);
+      const stale = quota([snapshot({ status: "stale" })], [cycle()]);
+      const sources = reverse ? [stale, observed] : [observed, stale];
+      const merged = mergeOfficialQuotaData(sources)!;
+      expect(merged.latest).toEqual(stale.latest);
+      expect(merged.latest[0].updatedAt).toBe(iso(10, 30));
+      expect(merged.latest[0].windows).toEqual(observed.latest[0].windows);
+      expect(merged.cycles).toEqual(observed.cycles);
+    },
+  );
+
+  it.each([false, true])(
+    "更新的成功观测恢复额度，旧 stale 副本不能覆盖（反序=%s）",
+    (reverse) => {
+      const stale = quota([snapshot({ status: "stale" })]);
+      const recovered = quota([
+        snapshot({
+          updatedAt: iso(10, 35),
+          windows: [
+            {
+              ...snapshot().windows[0],
+              usedPercent: 15,
+              remainingPercent: 85,
+            },
+          ],
+        }),
+      ]);
+      expect(
+        mergeOfficialQuotaData(
+          reverse ? [recovered, stale] : [stale, recovered],
+        )!.latest,
+      ).toEqual(recovered.latest);
+    },
+  );
+
   it("同账户同额度只选最新百分比，不跨设备相加；重复周期取更新观测", () => {
     const olderCycle = cycle({
       lastUsedPercent: 20,
@@ -586,7 +624,7 @@ it("严格清洗外部额度字段、数值和时间", () => {
   expect(clean.officialUsage[0].status).toBe("stale");
 });
 
-it("读取失败的近期快照不能显示为当前额度或继续预测", async () => {
+it("只有历史片段而没有最新快照时，不推造当前额度或继续预测", async () => {
   const { createElement } = await import("react");
   const { render, screen, cleanup } = await import("@testing-library/react");
   const { QuotaCycles } = await import("../src/views/QuotaCycles");

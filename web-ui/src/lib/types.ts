@@ -138,7 +138,7 @@ export interface OfficialQuotaSnapshot {
   limitName: string;
   planType: string;
   updatedAt: string;
-  status: "observed";
+  status: "observed" | "stale";
   windows: OfficialQuotaWindow[];
 }
 

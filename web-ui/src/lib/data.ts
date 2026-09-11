@@ -212,7 +212,7 @@ function quotaSnapshot(value: unknown): OfficialQuotaSnapshot | null {
     !row ||
     row.provider !== "codex" ||
     row.source !== "codex-app-server" ||
-    row.status !== "observed"
+    (row.status !== "observed" && row.status !== "stale")
   )
     return null;
   const accountKey = textValue(row.accountKey);
@@ -245,7 +245,7 @@ function quotaSnapshot(value: unknown): OfficialQuotaSnapshot | null {
     limitName,
     planType,
     updatedAt,
-    status: "observed",
+    status: row.status,
     windows,
   };
 }
