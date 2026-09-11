@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { QuotaCycles } from "../src/views/QuotaCycles";
 import { subscriptionFixture } from "./subscriptionFixture";
@@ -9,15 +9,15 @@ import {
 } from "../src/lib/subscriptions";
 
 describe("订阅工作台", () => {
-  it("首屏先展示官方额度与四项用量，公式和明细按需挂载", () => {
+  it("额度与金额同屏展示，移除重复排名，统计口径按需挂载", () => {
     render(<QuotaCycles dataset={subscriptionFixture()} />);
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.queryByText("原定重置")).toBeNull();
     expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
-    expect(screen.queryByText("$850.00 ÷ 57 × 100 = $1,491.23")).toBeNull();
+    expect(screen.getByText("$850.00 ÷ 57 × 100 = $1,491.23")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "设备用量" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "用量明细与统计口径" }));
-    expect(screen.getByRole("heading", { name: "设备用量" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "统计口径" }));
+    expect(screen.queryByRole("heading", { name: "设备用量" })).toBeNull();
     expect(screen.getByText("$850.00 ÷ 57 × 100 = $1,491.23")).toBeTruthy();
     expect(screen.getByRole("button", { name: "导出本周期 CSV" })).toBeTruthy();
   });
@@ -141,7 +141,7 @@ describe("订阅工作台", () => {
     expect(screen.getByText(/额度用量较少，估算波动可能较大/)).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "用量明细与统计口径" })
+        .getByRole("button", { name: "统计口径" })
         .getAttribute("aria-expanded"),
     ).toBe("false");
   });
@@ -162,6 +162,7 @@ describe("订阅工作台", () => {
       name: "secondary",
       windowMinutes: 300,
       usedPercent: 30,
+      resetsAt: new Date(Date.now() + 2 * 3600000).toISOString(),
     });
     data.officialQuota!.latest.push({
       ...data.officialQuota!.latest[0],
@@ -181,12 +182,143 @@ describe("订阅工作台", () => {
     expect(
       screen.getByRole("progressbar", { name: "Codex 5 小时额度剩余比例" }),
     ).toBeTruthy();
-    const extra = screen.getByText("其他模型额度").closest("details")!;
-    expect(extra.open).toBe(false);
+    expect(
+      screen.getByRole("progressbar", { name: "Spark 每周额度剩余比例" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Spark/ })).toBeNull();
-    const select = screen.getByRole("combobox", { name: "统计周期" });
-    expect(select.querySelectorAll("option")).toHaveLength(2);
+    expect(screen.queryByRole("combobox", { name: "统计周期" })).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "查看每周额度用量" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "查看5 小时额度用量" }));
+    expect(
+      screen
+        .getByRole("button", { name: "查看5 小时额度用量" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(screen.getByRole("heading", { name: "5 小时用量" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "查看每周额度用量" }));
     expect(screen.getByText("≈ $1,491.23")).toBeTruthy();
+  });
+  it("选择真实 5 小时窗口时，金额、比例与重置时间保持对应", () => {
+    const now = Date.parse("2026-09-11T04:00:00Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      const data = subscriptionFixture(now);
+      const weeklyReset = data.officialQuota!.latest[0].windows[0].resetsAt;
+      const sessionReset = new Date(now + 2 * 3600000).toISOString();
+      data.officialQuota!.latest[0].windows.push({
+        name: "secondary",
+        windowMinutes: 300,
+        usedPercent: 25,
+        remainingPercent: 75,
+        resetsAt: sessionReset,
+      });
+      data.records = [
+        {
+          ...data.records[0],
+          id: "inside-session",
+          timestampMs: now - 3600000,
+          cost: 100,
+        },
+        {
+          ...data.records[1],
+          id: "outside-session",
+          timestampMs: now - 6 * 3600000,
+          cost: 470,
+        },
+      ];
+      render(<QuotaCycles dataset={data} />);
+      const activity = () =>
+        within(screen.getByRole("region", { name: "本周期用量" }));
+      const weekly = screen.getByRole("button", { name: "查看每周额度用量" });
+      const session = screen.getByRole("button", {
+        name: "查看5 小时额度用量",
+      });
+      expect(
+        weekly
+          .closest(".sub-quota-row")!
+          .querySelector("time")!
+          .getAttribute("datetime"),
+      ).toBe(weeklyReset);
+      expect(
+        session
+          .closest(".sub-quota-row")!
+          .querySelector("time")!
+          .getAttribute("datetime"),
+      ).toBe(sessionReset);
+      expect(activity().getByText("$570.00")).toBeTruthy();
+      expect(
+        activity().getByText("$570.00 ÷ 57 × 100 = $1,000.00"),
+      ).toBeTruthy();
+
+      fireEvent.click(session);
+      expect(session.getAttribute("aria-pressed")).toBe("true");
+      expect(weekly.getAttribute("aria-pressed")).toBe("false");
+      expect(
+        activity().getByRole("heading", { name: "5 小时用量" }),
+      ).toBeTruthy();
+      expect(activity().getByText("$100.00")).toBeTruthy();
+      expect(activity().getByText("$100.00 ÷ 25 × 100 = $400.00")).toBeTruthy();
+      expect(activity().queryByText("$570.00")).toBeNull();
+      expect(
+        screen
+          .getByRole("progressbar", { name: "Codex 5 小时额度剩余比例" })
+          .getAttribute("aria-valuenow"),
+      ).toBe("75");
+
+      fireEvent.click(weekly);
+      expect(weekly.getAttribute("aria-pressed")).toBe("true");
+      expect(
+        activity().getByRole("heading", { name: "本周用量" }),
+      ).toBeTruthy();
+      expect(activity().getByText("$570.00")).toBeTruthy();
+      expect(activity().getByText("≈ $1,000.00")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("Spark 历史不显示或导出同时间范围内的工作区用量", () => {
+    const now = Date.now();
+    const data = subscriptionFixture(now);
+    const reset = now - 30 * 60000;
+    const elapsed = {
+      ...data.officialQuota!.cycles[0],
+      id: "elapsed-session",
+      windowName: "secondary",
+      windowMinutes: 300,
+      nominalStartAt: new Date(reset - 300 * 60000).toISOString(),
+      resetsAt: new Date(reset).toISOString(),
+      firstObservedAt: new Date(reset - 60000).toISOString(),
+      lastObservedAt: new Date(reset - 60000).toISOString(),
+      samples: [{ at: new Date(reset - 60000).toISOString(), usedPercent: 57 }],
+      closedAt: new Date(reset).toISOString(),
+    };
+    data.officialQuota!.cycles.push(elapsed, {
+      ...elapsed,
+      id: "elapsed-spark",
+      limitId: "spark",
+      limitName: "Spark",
+    });
+    data.records = [
+      { ...data.records[0], timestampMs: reset - 2 * 60000, cost: 321 },
+    ];
+    render(<QuotaCycles dataset={data} />);
+    fireEvent.click(screen.getByRole("button", { name: "周期历史" }));
+    fireEvent.click(screen.getByRole("button", { name: /Codex.*周期范围/ }));
+    expect(screen.getByText("$321.00 API 等价")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "导出本周期 CSV" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回周期历史" }));
+    fireEvent.click(screen.getByRole("button", { name: /Spark.*周期范围/ }));
+    expect(screen.getByText("该专用额度尚无独立用量记录。")).toBeTruthy();
+    expect(screen.getByText(/末次已用 57%/)).toBeTruthy();
+    expect(screen.queryByText(/\$321\.00/)).toBeNull();
+    expect(screen.queryByText(/Tokens/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "导出本周期 CSV" })).toBeNull();
   });
   it("最新快照覆盖同账号旧快照，秒级漂移合并样本并保留历史隔离", () => {
     const data = subscriptionFixture();
@@ -239,7 +371,7 @@ describe("订阅工作台", () => {
     });
     render(<QuotaCycles dataset={data} />);
     expect(screen.getByText("$850.00")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "用量明细与统计口径" }));
+    fireEvent.click(screen.getByRole("button", { name: "统计口径" }));
     expect(screen.getByText(/剩余额度估算 ≈ \$641.23/)).toBeTruthy();
     expect(screen.queryByText("$880.00")).toBeNull();
   });
@@ -273,7 +405,7 @@ describe("周期归档与周期内变更", () => {
   it("提前改期留在当前明细中，不独立成为历史周期", () => {
     render(<QuotaCycles dataset={subscriptionFixture()} />);
     expect(screen.queryByText("本周期额度变更")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "用量明细与统计口径" }));
+    fireEvent.click(screen.getByRole("button", { name: "统计口径" }));
     expect(
       screen.getByRole("heading", { name: "本周期额度变更" }),
     ).toBeTruthy();

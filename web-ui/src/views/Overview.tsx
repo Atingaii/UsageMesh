@@ -13,13 +13,11 @@ import type { ActiveTab, UsageRecord } from "../lib/types";
 import {
   COLORS,
   compact,
-  groupRows,
   METRICS,
   money,
   number,
   totals,
   trend,
-  type Dimension,
   type Metric,
 } from "../lib/analytics";
 import { EmptyState, Section } from "../components/ui";
@@ -174,67 +172,6 @@ export function TrendChart({ records }: { records: UsageRecord[] }) {
     </Section>
   );
 }
-function Ranking({
-  records,
-  dimension,
-  title,
-  label,
-}: {
-  records: UsageRecord[];
-  dimension: Dimension;
-  title: string;
-  label: string;
-}) {
-  const values = useMemo(
-    () => groupRows(records, dimension),
-    [records, dimension],
-  );
-  return (
-    <Section
-      title={title}
-      action={
-        <span className="muted small">
-          {values.length} {label}
-        </span>
-      }
-    >
-      <div className="ranking-list">
-        {values.slice(0, 5).map((item, index) => (
-          <div className="ranking-item" key={item.name}>
-            <div className="ranking-title">
-              <span
-                className="ranking-marker"
-                style={{ background: COLORS[index % COLORS.length] }}
-              />
-              <span title={item.name}>{item.name}</span>
-              <strong>{compact(item.value)}</strong>
-              <small>{item.share.toFixed(1)}%</small>
-            </div>
-            <div className="progress-track">
-              <div
-                style={{
-                  width: `${item.share}%`,
-                  background: COLORS[index % COLORS.length],
-                }}
-              />
-            </div>
-          </div>
-        ))}
-        {!values.length && <EmptyState />}
-        {values.length > 5 && (
-          <p className="muted small">
-            其余 {values.length - 5} 项占{" "}
-            {values
-              .slice(5)
-              .reduce((s, v) => s + v.share, 0)
-              .toFixed(1)}
-            %
-          </p>
-        )}
-      </div>
-    </Section>
-  );
-}
 export const Overview = memo(function Overview({
   records,
   onNavigate,
@@ -347,49 +284,25 @@ export const Overview = memo(function Overview({
             <ArrowRight size={14} />
           </button>
         </Section>
-        <Ranking
-          records={records}
-          dimension="model"
-          title="模型分布"
-          label="个模型"
-        />
-        <Ranking
-          records={records}
-          dimension="tool"
-          title="客户端分布"
-          label="个客户端"
-        />
-        <Ranking
-          records={records}
-          dimension="device"
-          title="设备分布"
-          label="台设备"
-        />
-        <Ranking
-          records={records}
-          dimension="routeProvider"
-          title="路由分布"
-          label="条路由"
-        />
       </div>
-      <div className="insight-strip">
-        <div>
-          <strong>
-            {budget
-              ? `本月费用提醒 · ${lowerBound ? "≥ " : ""}${money(monthlyCost)} / ${money(budget)}`
-              : "每月费用提醒"}
-          </strong>
-          <p>
-            {budget
-              ? `已达到提醒阈值的 ${((monthlyCost / budget) * 100).toFixed(1)}%。按本月全部设备估算，不受页面筛选影响。${monthlyCost >= budget ? "已达到设定阈值。" : ""}`
-              : "设置每月费用提醒，在概览中查看用量进度。提醒仅保存在当前浏览器。"}
-          </p>
+      {budget > 0 && (
+        <div className="insight-strip">
+          <div>
+            <strong>
+              本月费用提醒 · {lowerBound ? "≥ " : ""}
+              {money(monthlyCost)} / {money(budget)}
+            </strong>
+            <p>
+              已达到提醒阈值的 {((monthlyCost / budget) * 100).toFixed(1)}%。
+              按本月全部设备估算，不受页面筛选影响。
+              {monthlyCost >= budget ? "已达到设定阈值。" : ""}
+            </p>
+          </div>
+          <button className="button" onClick={() => onNavigate("settings")}>
+            调整提醒 <ArrowUpRight size={14} />
+          </button>
         </div>
-        <button className="button" onClick={() => onNavigate("settings")}>
-          {budget ? "调整提醒" : "设置费用提醒"}
-          <ArrowUpRight size={14} />
-        </button>
-      </div>
+      )}
     </div>
   );
 });

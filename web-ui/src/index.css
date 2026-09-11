@@ -390,7 +390,7 @@ svg {
   display: inline-flex;
   gap: 7px;
   align-items: center;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -416,7 +416,7 @@ svg {
   background: var(--bg-card);
 }
 .sidebar-brand {
-  min-height: 64px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -438,48 +438,8 @@ svg {
   width: 28px;
   height: 30px;
 }
-.workspace-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 8px;
-  margin-bottom: 8px;
-  min-width: 0;
-}
-.workspace-avatar {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-card-hover);
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.workspace-label div {
-  min-width: 0;
-}
-.workspace-label strong {
-  display: block;
-  font-size: 0.8125rem;
-  font-weight: 550;
-}
-.workspace-label div > span {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.nav-section {
-  margin: 18px 10px 7px;
-  font-size: 0.6875rem;
-  color: var(--text-muted);
-  font-weight: 500;
+.nav-group-start {
+  margin-top: 16px;
 }
 .nav-item {
   display: flex;
@@ -494,7 +454,7 @@ svg {
   background: transparent;
   color: var(--text-secondary);
   text-align: left;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 450;
 }
 .nav-item svg {
@@ -521,37 +481,16 @@ svg {
   color: var(--text-muted);
   font-size: 0.6875rem;
 }
-.nav-divider {
-  display: block;
-  height: 1px;
-  background: var(--border-color);
-}
 .sidebar-bottom {
   margin-top: auto;
-  padding: 24px 0 12px;
-}
-.sidebar-signature {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 14px 10px 2px;
-  font-size: 0.6875rem;
-  color: var(--text-muted);
+  padding: 16px 0 12px;
 }
 .is-collapsed .sidebar {
   padding: 0 10px;
 }
 .is-collapsed .sidebar-brand,
-.is-collapsed .nav-item,
-.is-collapsed .sidebar-signature {
+.is-collapsed .nav-item {
   justify-content: center;
-}
-.is-collapsed .workspace-label {
-  justify-content: center;
-  padding: 8px 0;
-}
-.is-collapsed .nav-section {
-  margin: 18px 8px 10px;
 }
 .workspace-body {
   min-width: 0;
@@ -571,26 +510,35 @@ svg {
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-card);
 }
-.breadcrumb {
+.topbar-identity {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  font-size: 0.8125rem;
+  flex: 1;
 }
-.topbar-workspace,
-.breadcrumb-divider {
-  color: var(--text-muted);
+.topbar-repo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
 }
-.topbar-context {
+.topbar-repo svg {
+  flex-shrink: 0;
+}
+.topbar-repo span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.topbar-repo:hover {
   color: var(--text-primary);
-  font-weight: 500;
 }
 .topbar-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 3px;
 }
@@ -639,7 +587,7 @@ svg {
 }
 .page-heading p {
   margin-top: 5px;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--text-muted);
   line-height: 1.65;
 }
@@ -654,27 +602,6 @@ svg {
   flex-direction: column;
   gap: 18px;
   min-width: 0;
-}
-.workspace-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-  max-width: var(--content-width);
-  margin: 0 auto;
-  padding: 20px 28px;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-}
-.workspace-footer > a {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  overflow-wrap: anywhere;
-}
-.workspace-footer > a:first-of-type {
-  margin-left: auto;
 }
 /* Optional analysis stays out of the primary reading path. */
 .disclosure-section {
@@ -1039,7 +966,7 @@ svg {
 }
 .overview-rank-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
   gap: 16px;
 }
@@ -1140,49 +1067,12 @@ svg {
   padding-top: 8px;
   font-size: 0.75rem;
 }
-.ranking-list {
-  padding: 0 18px 18px;
-}
-.ranking-item {
-  margin-top: 13px;
-}
-.ranking-item:first-child {
-  margin-top: 0;
-}
-.ranking-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 7px;
-  font-size: 0.8125rem;
-}
-.ranking-title > span:nth-child(2) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ranking-title strong {
-  font-size: 0.75rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.ranking-title small {
-  min-width: 39px;
-  text-align: right;
-  color: var(--text-muted);
-  font-size: 0.6875rem;
-}
 .ranking-marker {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 2px;
   flex-shrink: 0;
-}
-.ranking-list > p {
-  margin-top: 14px;
 }
 .insight-strip {
   display: flex;
@@ -1901,9 +1791,6 @@ svg {
   .main-content {
     padding: 22px 18px 32px;
   }
-  .workspace-footer {
-    padding: 18px;
-  }
   .guide-layout {
     grid-template-columns: 1fr;
     gap: 24px;
@@ -1928,15 +1815,11 @@ svg {
     padding: 0 8px;
     gap: 4px;
   }
-  .topbar-workspace,
-  .breadcrumb-divider {
-    display: none;
-  }
-  .breadcrumb {
+  .topbar-identity {
     gap: 5px;
   }
-  .topbar-context {
-    font-size: 0.8125rem;
+  .topbar-repo {
+    gap: 6px;
   }
   .topbar-actions {
     gap: 0;
@@ -1960,7 +1843,7 @@ svg {
     font-size: 1.375rem;
   }
   .page-heading p {
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
   }
   .page-actions .button {
     padding: 7px 9px;
@@ -2201,16 +2084,6 @@ svg {
   }
   .guide-intro {
     margin: 14px 0 18px;
-  }
-  .workspace-footer {
-    padding: 18px 12px;
-    gap: 8px 14px;
-  }
-  .workspace-footer > span {
-    width: 100%;
-  }
-  .workspace-footer > a:first-of-type {
-    margin-left: 0;
   }
 }
 .quota-cycles .panel-heading {
@@ -3017,7 +2890,7 @@ svg {
 .mobile-close {
   position: absolute;
   right: 10px;
-  top: 19px;
+  top: 10px;
 }
 .mobile-sidebar .sidebar-brand {
   padding-right: 20px;

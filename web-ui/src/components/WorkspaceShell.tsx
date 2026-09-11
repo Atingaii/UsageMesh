@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   BookOpen,
   ChartNoAxesCombined,
-  CircleHelp,
   Database,
   Github,
   Gauge,
@@ -137,23 +136,14 @@ export function WorkspaceShell(props: Props) {
           </button>
         )}
       </div>
-      <div className="workspace-label">
-        <span className="workspace-avatar">U</span>
-        {!small && (
-          <div>
-            <strong>个人工作区</strong>
-            <span title={repo}>{repo}</span>
-          </div>
-        )}
-      </div>
       <nav aria-label="工作区导航">
-        {NAV.map((item) => (
-          <div key={item.id}>
-            {"section" in item && (
-              <div className="nav-section">
-                {small ? <span className="nav-divider" /> : item.section}
-              </div>
-            )}
+        {NAV.map((item, index) => (
+          <div
+            key={item.id}
+            className={
+              index > 0 && "section" in item ? "nav-group-start" : undefined
+            }
+          >
             <button
               className={`nav-item ${activeTab === item.id ? "active" : ""}`}
               aria-current={activeTab === item.id ? "page" : undefined}
@@ -192,16 +182,16 @@ export function WorkspaceShell(props: Props) {
         </button>
         <a
           className="nav-item"
-          href="https://github.com/Atingaii/UsageMesh/blob/main/README.zh-CN.md"
+          href="https://github.com/Atingaii/UsageMesh/blob/main/docs/PRICING.md"
           target="_blank"
           rel="noreferrer"
-          aria-label="帮助与文档"
-          title={small ? "帮助与文档" : undefined}
+          aria-label="费用口径"
+          title={small ? "费用口径" : undefined}
         >
-          <CircleHelp size={18} />
+          <BookOpen size={18} />
           {!small && (
             <>
-              <span>帮助与文档</span>
+              <span>费用口径</span>
               <ArrowUpRight size={14} />
             </>
           )}
@@ -215,14 +205,9 @@ export function WorkspaceShell(props: Props) {
             <PanelLeftOpen size={19} />
           </button>
         )}
-        <div className="sidebar-signature">
-          <span className="status-dot" />
-          {!small && <span>本地解密 · 加密同步</span>}
-        </div>
       </div>
     </>
   );
-  const current = NAV.find((item) => item.id === activeTab)!;
   const statusText =
     status === "syncing"
       ? "正在刷新"
@@ -270,7 +255,7 @@ export function WorkspaceShell(props: Props) {
       </dialog>
       <div className="workspace-body">
         <header className="topbar">
-          <div className="breadcrumb">
+          <div className="topbar-identity">
             <button
               className="icon-button mobile-only"
               aria-label="打开导航菜单"
@@ -279,11 +264,16 @@ export function WorkspaceShell(props: Props) {
             >
               <Menu size={20} />
             </button>
-            <span className="topbar-workspace">工作区</span>
-            <span className="breadcrumb-divider" aria-hidden="true">
-              /
-            </span>
-            <span className="topbar-context">{current.label}</span>
+            <a
+              className="topbar-repo"
+              href={`https://github.com/${repo}`}
+              target="_blank"
+              rel="noreferrer"
+              title={repo}
+            >
+              <Github size={16} />
+              <span>{repo}</span>
+            </a>
           </div>
           <div className="topbar-actions">
             <span
@@ -326,27 +316,6 @@ export function WorkspaceShell(props: Props) {
           </div>
         </header>
         {children}
-        <footer className="workspace-footer">
-          <span>
-            UsageMesh <span className="footer-dot">·</span> 数据由你掌控
-          </span>
-          <a
-            href={`https://github.com/${repo}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Github size={13} />
-            {repo}
-          </a>
-          <a
-            href="https://github.com/Atingaii/UsageMesh/blob/main/docs/PRICING.md"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <BookOpen size={13} />
-            费用口径
-          </a>
-        </footer>
       </div>
     </div>
   );
